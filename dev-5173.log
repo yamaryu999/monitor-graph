@@ -7,3 +7,5 @@
 
   ➜  Local:   http://localhost:5173/
   ➜  Network: http://10.0.2.15:5173/
+22:05:31 [vite] hmr update /src/App.tsx
+22:05:37 [vite] hmr update /src/App.css

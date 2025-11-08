@@ -18,6 +18,7 @@ import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 import './App.css';
+import pkg from '../package.json';
 
 dayjs.extend(customParseFormat);
 
@@ -289,6 +290,7 @@ const useChartData = (
   }, [parsed, seriesVisibility]);
 
 function App() {
+  const appVersion = (pkg as { version?: string }).version ?? '0.0.0';
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [seriesVisibility, setSeriesVisibility] = useState<Record<string, boolean>>({});
   const [fileName, setFileName] = useState('');
@@ -479,6 +481,9 @@ function App() {
       ) : (
         !isLoading && <div className="placeholder">ファイルを選択するとここにグラフが表示されます。</div>
       )}
+
+      {/* Version badge */}
+      <div className="version-badge" title={`version ${appVersion}`}>v{appVersion}</div>
     </div>
   );
 }

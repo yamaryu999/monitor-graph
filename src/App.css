@@ -152,6 +152,21 @@
   color: #475569;
 }
 
+/* Version badge */
+.version-badge {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  z-index: 1000;
+}
+
 @media (max-width: 640px) {
   .app-shell {
     padding: 24px 16px 32px;
