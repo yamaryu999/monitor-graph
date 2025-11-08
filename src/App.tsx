@@ -335,7 +335,8 @@ function App() {
       zoom: {
         pan: {
           enabled: true,
-          mode: 'x'
+          mode: 'x',
+          modifierKey: 'shift'
         },
         zoom: {
           mode: 'x',
@@ -516,6 +517,7 @@ function App() {
           </section>
 
           <section className="chart-section">
+            <p className="zoom-hint">ドラッグでズーム／Shift+ドラッグで移動／Ctrl+ホイールで拡大縮小</p>
             <Line ref={chartRef} options={chartOptions} data={chartData} />
           </section>
         </>

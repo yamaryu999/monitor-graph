@@ -143,6 +143,12 @@
   max-height: 420px;
 }
 
+.zoom-hint {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
 .placeholder {
   padding: 24px;
   border-radius: 16px;
