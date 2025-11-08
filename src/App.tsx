@@ -87,6 +87,14 @@ const AXIS_OPTIONS = AXIS_KEYS.map((key) => ({
   label: AXIS_CONFIG[key].label
 }));
 
+type AxisRangeState = Record<AxisKey, { min: string; max: string }>;
+
+const createAxisRangeState = (): AxisRangeState =>
+  AXIS_KEYS.reduce((acc, key) => {
+    acc[key] = { min: '', max: '' };
+    return acc;
+  }, {} as AxisRangeState);
+
 type TimeParts = {
   hour: number;
   minute: number;
@@ -353,6 +361,10 @@ function App() {
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [seriesVisibility, setSeriesVisibility] = useState<Record<string, boolean>>({});
   const [seriesAxis, setSeriesAxis] = useState<Record<string, AxisKey>>({});
+  const [axisRanges, setAxisRanges] = useState<AxisRangeState>(() => createAxisRangeState());
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [filterText, setFilterText] = useState('');
+  const [bulkAxis, setBulkAxis] = useState<AxisKey>('y1');
   const [fileName, setFileName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -362,7 +374,24 @@ function App() {
 
   const chartData = useChartData(parsedData, seriesVisibility, seriesAxis);
 
-  const chartOptions = useMemo<ChartOptions<'line'>>(() => ({
+  const chartOptions = useMemo<ChartOptions<'line'>>(() => {
+    const toNumber = (value: string | undefined) => {
+      if (value === undefined || value.trim() === '') {
+        return undefined;
+      }
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+
+    const axisBounds = AXIS_KEYS.reduce((acc, key) => {
+      acc[key] = {
+        min: toNumber(axisRanges[key]?.min),
+        max: toNumber(axisRanges[key]?.max)
+      };
+      return acc;
+    }, {} as Record<AxisKey, { min?: number; max?: number }>);
+
+    return {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index' as const, intersect: false, axis: 'x' },
@@ -422,6 +451,8 @@ function App() {
         display: true,
         position: AXIS_CONFIG.y1.position,
         beginAtZero: false,
+        min: axisBounds.y1.min,
+        max: axisBounds.y1.max,
         ticks: { color: AXIS_CONFIG.y1.color },
         title: { display: true, text: AXIS_CONFIG.y1.label },
         grid: {
@@ -433,6 +464,8 @@ function App() {
         display: true,
         position: AXIS_CONFIG.y2.position,
         beginAtZero: false,
+        min: axisBounds.y2.min,
+        max: axisBounds.y2.max,
         ticks: { color: AXIS_CONFIG.y2.color },
         title: { display: true, text: AXIS_CONFIG.y2.label },
         grid: {
@@ -444,6 +477,8 @@ function App() {
         display: true,
         position: AXIS_CONFIG.y3.position,
         beginAtZero: false,
+        min: axisBounds.y3.min,
+        max: axisBounds.y3.max,
         ticks: { color: AXIS_CONFIG.y3.color },
         title: { display: true, text: AXIS_CONFIG.y3.label },
         offset: AXIS_CONFIG.y3.offset,
@@ -452,21 +487,23 @@ function App() {
         }
       }
     }
-  }), []);
+  };
+  }, [axisRanges]);
 
   const resetState = () => {
     setParsedData(null);
     setSeriesVisibility({});
     setSeriesAxis({});
+    setAxisRanges(createAxisRangeState());
     setFileName('');
   };
 
   const initializeSeriesState = (series: Record<string, (number | null)[]>) => {
     const visibility: Record<string, boolean> = {};
     const axis: Record<string, AxisKey> = {};
-    Object.keys(series).forEach((key, index) => {
+    Object.keys(series).forEach((key) => {
       visibility[key] = true;
-      axis[key] = AXIS_KEYS[index % AXIS_KEYS.length];
+      axis[key] = 'y1';
     });
     setSeriesVisibility(visibility);
     setSeriesAxis(axis);
@@ -539,11 +576,50 @@ function App() {
     }));
   };
 
+  const handleAxisRangeChange = (axisKey: AxisKey, field: 'min' | 'max', value: string) => {
+    setAxisRanges((current) => ({
+      ...current,
+      [axisKey]: {
+        ...current[axisKey],
+        [field]: value
+      }
+    }));
+  };
+
   const handleResetZoom = useCallback(() => {
     chartRef.current?.resetZoom();
   }, []);
 
   const seriesEntries = parsedData ? Object.keys(parsedData.series) : [];
+  const filteredSeriesEntries = useMemo(() => {
+    if (!filterText) return seriesEntries;
+    const q = filterText.toLowerCase();
+    return seriesEntries.filter((name) => name.toLowerCase().includes(q));
+  }, [filterText, seriesEntries]);
+  const visibleCount = useMemo(
+    () => seriesEntries.filter((n) => seriesVisibility[n] ?? true).length,
+    [seriesEntries, seriesVisibility]
+  );
+
+  const setVisibilityForFiltered = (value: boolean) => {
+    setSeriesVisibility((current) => {
+      const next = { ...current } as Record<string, boolean>;
+      filteredSeriesEntries.forEach((name) => {
+        next[name] = value;
+      });
+      return next;
+    });
+  };
+
+  const applyAxisToFiltered = (axisKey: AxisKey) => {
+    setSeriesAxis((current) => {
+      const next = { ...current } as Record<string, AxisKey>;
+      filteredSeriesEntries.forEach((name) => {
+        next[name] = axisKey;
+      });
+      return next;
+    });
+  };
 
   return (
     <div className="app-shell">
@@ -578,53 +654,109 @@ function App() {
 
       {parsedData && chartData ? (
         <>
-          <section className="series-panel">
-            <div className="panel-header">
-              <h2>表示するデータ列</h2>
-              <div className="panel-actions">
-                <button type="button" onClick={selectAll}>
-                  全選択
-                </button>
-                <button type="button" onClick={clearAll}>
-                  全解除
-                </button>
-                <button type="button" onClick={handleResetZoom}>
+          <section className="chart-section">
+            <div className="chart-toolbar">
+              <div className="left">
+                <button type="button" className="btn" onClick={handleResetZoom}>
                   ズームリセット
                 </button>
               </div>
+              <div className="right">
+                <span style={{ color: '#64748b', fontSize: '0.9rem' }}>表示 {visibleCount}/{seriesEntries.length}</span>
+                <button type="button" className="btn" onClick={() => setControlsOpen(true)}>
+                  表示・軸設定
+                </button>
+              </div>
             </div>
-            <p className="axis-hint">各データ列ごとに最大3本の縦軸から割り当てを選択できます。</p>
-            <div className="series-list">
-              {seriesEntries.map((name) => (
-                <div key={name} className="series-item">
-                  <label className="series-toggle">
-                    <input
-                      type="checkbox"
-                      checked={seriesVisibility[name] ?? true}
-                      onChange={() => toggleSeries(name)}
-                    />
-                    <span>{name}</span>
-                  </label>
-                  <select
-                    className="axis-select"
-                    value={seriesAxis[name] ?? 'y1'}
-                    onChange={(event) => handleAxisChange(name, event.target.value as AxisKey)}
-                  >
-                    {AXIS_OPTIONS.map((option) => (
-                      <option key={option.key} value={option.key}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="chart-section">
             <p className="zoom-hint">ドラッグでズーム／Shift+ドラッグで移動／Ctrl+ホイールで拡大縮小</p>
             <Line ref={chartRef} options={chartOptions} data={chartData} />
           </section>
+
+          {/* Side controls panel */}
+          <div className={"backdrop" + (controlsOpen ? ' show' : '')} onClick={() => setControlsOpen(false)} />
+          <aside className={"side-panel" + (controlsOpen ? ' open' : '')} aria-label="データ/軸設定パネル">
+            <div className="side-header">
+              <strong>データ/軸設定</strong>
+              <button type="button" className="btn" onClick={() => setControlsOpen(false)}>閉じる</button>
+            </div>
+            <div className="side-body">
+              <div className="filter-row">
+                <input
+                  className="filter-input"
+                  placeholder="列名でフィルター"
+                  value={filterText}
+                  onChange={(e) => setFilterText(e.target.value)}
+                />
+              </div>
+
+              <div className="bulk-row">
+                <button className="btn" type="button" onClick={() => setVisibilityForFiltered(true)}>表示(フィルター)</button>
+                <button className="btn" type="button" onClick={() => setVisibilityForFiltered(false)}>非表示(フィルター)</button>
+                <select className="axis-select" value={bulkAxis} onChange={(e) => setBulkAxis(e.target.value as AxisKey)}>
+                  {AXIS_OPTIONS.map((o) => (
+                    <option key={o.key} value={o.key}>{o.label}</option>
+                  ))}
+                </select>
+                <button className="btn" type="button" onClick={() => applyAxisToFiltered(bulkAxis)}>軸を一括適用(フィルター)</button>
+              </div>
+
+              <div className="series-list">
+                {filteredSeriesEntries.map((name) => (
+                  <div key={name} className="series-item">
+                    <label className="series-toggle">
+                      <input
+                        type="checkbox"
+                        checked={seriesVisibility[name] ?? true}
+                        onChange={() => toggleSeries(name)}
+                      />
+                      <span>{name}</span>
+                    </label>
+                    <select
+                      className="axis-select"
+                      value={seriesAxis[name] ?? 'y1'}
+                      onChange={(event) => handleAxisChange(name, event.target.value as AxisKey)}
+                    >
+                      {AXIS_OPTIONS.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+
+              <div className="axis-range-panel">
+                <div className="axis-range-grid">
+                  {AXIS_KEYS.map((key) => (
+                    <div key={key} className="axis-range-card">
+                      <p className="axis-range-title">{AXIS_CONFIG[key].label}</p>
+                      <div className="axis-range-inputs">
+                        <label>
+                          <span>最小値</span>
+                          <input
+                            type="number"
+                            placeholder="auto"
+                            value={axisRanges[key]?.min ?? ''}
+                            onChange={(event) => handleAxisRangeChange(key, 'min', event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>最大値</span>
+                          <input
+                            type="number"
+                            placeholder="auto"
+                            value={axisRanges[key]?.max ?? ''}
+                            onChange={(event) => handleAxisRangeChange(key, 'max', event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </aside>
         </>
       ) : (
         !isLoading && <div className="placeholder">ファイルを選択するとここにグラフが表示されます。</div>

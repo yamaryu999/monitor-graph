@@ -102,6 +102,51 @@
   color: #64748b;
 }
 
+.axis-range-panel {
+  margin-top: 16px;
+}
+
+.axis-range-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.axis-range-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.axis-range-title {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.axis-range-inputs {
+  display: flex;
+  gap: 12px;
+}
+
+.axis-range-inputs label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+  color: #475569;
+  gap: 4px;
+}
+
+.axis-range-inputs input {
+  border: 1px solid #cbd5f5;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 0.85rem;
+}
+
 .panel-header h2 {
   margin: 0;
   font-size: 1.15rem;
@@ -121,6 +166,103 @@
   cursor: pointer;
   font-weight: 600;
   color: #0f172a;
+}
+
+/* Compact controls: toolbar + side panel */
+.chart-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.chart-toolbar .left,
+.chart-toolbar .right {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.btn {
+  border: 1px solid #94a3b8;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.side-panel {
+  position: fixed;
+  top: 0;
+  right: -420px;
+  width: 420px;
+  max-width: 92vw;
+  height: 100vh;
+  background: #ffffff;
+  border-left: 1px solid #e2e8f0;
+  box-shadow: -6px 0 18px rgba(15, 23, 42, 0.08);
+  transition: right 0.25s ease;
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+}
+
+.side-panel.open {
+  right: 0;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.3);
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.backdrop.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.side-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.side-body {
+  padding: 14px 16px 20px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.filter-row {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-input {
+  flex: 1;
+  border: 1px solid #cbd5f5;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.95rem;
+}
+
+.bulk-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .series-list {
