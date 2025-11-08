@@ -281,14 +281,17 @@ const useChartData = (
     const datasetEntries = Object.entries(parsed.series);
 
     return {
-      labels: parsed.timestamps,
       datasets: datasetEntries.map(([label, values], index) => {
         const colors = colorFromIndex(index);
         const isVisible = seriesVisibility[label] ?? true;
+        const points = parsed.timestamps.map((timestamp, pointIndex) => ({
+          x: timestamp.getTime(),
+          y: values[pointIndex] ?? null
+        }));
         return {
           type: 'line' as const,
           label,
-          data: values,
+          data: points,
           borderColor: colors.border,
           backgroundColor: colors.background,
           spanGaps: true,
@@ -323,12 +326,11 @@ function App() {
       tooltip: {
         callbacks: {
           title(items: any[]) {
-            const value = items[0]?.label;
-            if (!value) {
+            const value = items[0]?.parsed?.x;
+            if (value === undefined || value === null) {
               return '';
             }
-            const date = new Date(value);
-            return dayjs(date).format('YYYY/MM/DD HH:mm:ss');
+            return dayjs(value).format('YYYY/MM/DD HH:mm:ss');
           }
         }
       },
