@@ -70,6 +70,23 @@ type ParsedData = {
   series: Record<string, (number | null)[]>;
 };
 
+const AXIS_KEYS = ['y1', 'y2', 'y3'] as const;
+type AxisKey = (typeof AXIS_KEYS)[number];
+
+const AXIS_CONFIG: Record<
+  AxisKey,
+  { label: string; position: 'left' | 'right'; color: string; offset?: boolean; gridOnChart?: boolean }
+> = {
+  y1: { label: 'Y1 (左軸)', position: 'left', color: '#0f172a', gridOnChart: true },
+  y2: { label: 'Y2 (右軸)', position: 'right', color: '#16a34a', gridOnChart: false },
+  y3: { label: 'Y3 (右軸2)', position: 'right', color: '#2563eb', offset: true, gridOnChart: false }
+};
+
+const AXIS_OPTIONS = AXIS_KEYS.map((key) => ({
+  key,
+  label: AXIS_CONFIG[key].label
+}));
+
 type TimeParts = {
   hour: number;
   minute: number;
@@ -298,7 +315,8 @@ const parseXlsxFile = async (file: File): Promise<DataRow[]> => {
 
 const useChartData = (
   parsed: ParsedData | null,
-  seriesVisibility: Record<string, boolean>
+  seriesVisibility: Record<string, boolean>,
+  seriesAxis: Record<string, AxisKey>
 ): ChartData<'line'> | null =>
   useMemo(() => {
     if (!parsed) {
@@ -324,15 +342,17 @@ const useChartData = (
           spanGaps: true,
           pointRadius: 2,
           tension: 0.2,
-          hidden: !isVisible
+          hidden: !isVisible,
+          yAxisID: seriesAxis[label] ?? 'y1'
         };
       })
     } satisfies ChartData<'line'>;
-  }, [parsed, seriesVisibility]);
+  }, [parsed, seriesAxis, seriesVisibility]);
 
 function App() {
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [seriesVisibility, setSeriesVisibility] = useState<Record<string, boolean>>({});
+  const [seriesAxis, setSeriesAxis] = useState<Record<string, AxisKey>>({});
   const [fileName, setFileName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -340,7 +360,7 @@ function App() {
   const appVersion = (pkg as { version?: string }).version ?? '0.0.0';
   const chartRef = useRef<ChartJS<'line'> | null>(null);
 
-  const chartData = useChartData(parsedData, seriesVisibility);
+  const chartData = useChartData(parsedData, seriesVisibility, seriesAxis);
 
   const chartOptions = useMemo<ChartOptions<'line'>>(() => ({
     responsive: true,
@@ -397,8 +417,39 @@ function App() {
           }
         }
       },
-      y: {
-        beginAtZero: false
+      y1: {
+        type: 'linear' as const,
+        display: true,
+        position: AXIS_CONFIG.y1.position,
+        beginAtZero: false,
+        ticks: { color: AXIS_CONFIG.y1.color },
+        title: { display: true, text: AXIS_CONFIG.y1.label },
+        grid: {
+          drawOnChartArea: AXIS_CONFIG.y1.gridOnChart ?? true
+        }
+      },
+      y2: {
+        type: 'linear' as const,
+        display: true,
+        position: AXIS_CONFIG.y2.position,
+        beginAtZero: false,
+        ticks: { color: AXIS_CONFIG.y2.color },
+        title: { display: true, text: AXIS_CONFIG.y2.label },
+        grid: {
+          drawOnChartArea: AXIS_CONFIG.y2.gridOnChart ?? false
+        }
+      },
+      y3: {
+        type: 'linear' as const,
+        display: true,
+        position: AXIS_CONFIG.y3.position,
+        beginAtZero: false,
+        ticks: { color: AXIS_CONFIG.y3.color },
+        title: { display: true, text: AXIS_CONFIG.y3.label },
+        offset: AXIS_CONFIG.y3.offset,
+        grid: {
+          drawOnChartArea: AXIS_CONFIG.y3.gridOnChart ?? false
+        }
       }
     }
   }), []);
@@ -406,15 +457,19 @@ function App() {
   const resetState = () => {
     setParsedData(null);
     setSeriesVisibility({});
+    setSeriesAxis({});
     setFileName('');
   };
 
-  const initializeVisibility = (series: Record<string, (number | null)[]>) => {
-    const nextState: Record<string, boolean> = {};
-    Object.keys(series).forEach((key) => {
-      nextState[key] = true;
+  const initializeSeriesState = (series: Record<string, (number | null)[]>) => {
+    const visibility: Record<string, boolean> = {};
+    const axis: Record<string, AxisKey> = {};
+    Object.keys(series).forEach((key, index) => {
+      visibility[key] = true;
+      axis[key] = AXIS_KEYS[index % AXIS_KEYS.length];
     });
-    setSeriesVisibility(nextState);
+    setSeriesVisibility(visibility);
+    setSeriesAxis(axis);
   };
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -441,7 +496,7 @@ function App() {
 
       const parsed = buildParsedData(rows);
       setParsedData(parsed);
-      initializeVisibility(parsed.series);
+      initializeSeriesState(parsed.series);
       setFileName(file.name);
     } catch (error) {
       if (error instanceof Error) {
@@ -476,6 +531,13 @@ function App() {
   const selectAll = () => updateAllVisibility(true);
 
   const clearAll = () => updateAllVisibility(false);
+
+  const handleAxisChange = (name: string, axisKey: AxisKey) => {
+    setSeriesAxis((current) => ({
+      ...current,
+      [name]: axisKey
+    }));
+  };
 
   const handleResetZoom = useCallback(() => {
     chartRef.current?.resetZoom();
@@ -531,16 +593,30 @@ function App() {
                 </button>
               </div>
             </div>
+            <p className="axis-hint">各データ列ごとに最大3本の縦軸から割り当てを選択できます。</p>
             <div className="series-list">
               {seriesEntries.map((name) => (
-                <label key={name} className="series-item">
-                  <input
-                    type="checkbox"
-                    checked={seriesVisibility[name] ?? true}
-                    onChange={() => toggleSeries(name)}
-                  />
-                  <span>{name}</span>
-                </label>
+                <div key={name} className="series-item">
+                  <label className="series-toggle">
+                    <input
+                      type="checkbox"
+                      checked={seriesVisibility[name] ?? true}
+                      onChange={() => toggleSeries(name)}
+                    />
+                    <span>{name}</span>
+                  </label>
+                  <select
+                    className="axis-select"
+                    value={seriesAxis[name] ?? 'y1'}
+                    onChange={(event) => handleAxisChange(name, event.target.value as AxisKey)}
+                  >
+                    {AXIS_OPTIONS.map((option) => (
+                      <option key={option.key} value={option.key}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               ))}
             </div>
           </section>

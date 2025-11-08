@@ -96,6 +96,12 @@
   gap: 12px;
 }
 
+.axis-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
 .panel-header h2 {
   margin: 0;
   font-size: 1.15rem;
@@ -127,11 +133,29 @@
 .series-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
   padding: 8px 10px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.series-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.axis-select {
+  min-width: 120px;
+  border: 1px solid #cbd5f5;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  background: #fff;
   color: #0f172a;
 }
 
