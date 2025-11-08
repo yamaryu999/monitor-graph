@@ -1,7 +1,7 @@
-import { ChangeEvent, useMemo, useState } from 'react';
+import { ChangeEvent, useCallback, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import { Line } from 'react-chartjs-2';
-import type { ChartData } from 'chart.js';
+import type { ChartData, ChartOptions } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -13,6 +13,7 @@ import {
   TimeScale,
   Tooltip
 } from 'chart.js';
+import zoomPlugin from 'chartjs-plugin-zoom';
 import 'chartjs-adapter-date-fns';
 import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
@@ -22,7 +23,17 @@ import pkg from '../package.json';
 
 dayjs.extend(customParseFormat);
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Tooltip, Legend, Filler);
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  TimeScale,
+  Tooltip,
+  Legend,
+  Filler,
+  zoomPlugin
+);
 
 type CellValue = string | number | Date | null | undefined;
 type DataRow = CellValue[];
@@ -290,17 +301,18 @@ const useChartData = (
   }, [parsed, seriesVisibility]);
 
 function App() {
-  const appVersion = (pkg as { version?: string }).version ?? '0.0.0';
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [seriesVisibility, setSeriesVisibility] = useState<Record<string, boolean>>({});
   const [fileName, setFileName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [inputKey, setInputKey] = useState(Date.now());
+  const appVersion = (pkg as { version?: string }).version ?? '0.0.0';
+  const chartRef = useRef<ChartJS<'line'> | null>(null);
 
   const chartData = useChartData(parsedData, seriesVisibility);
 
-  const chartOptions = useMemo(() => ({
+  const chartOptions = useMemo<ChartOptions<'line'>>(() => ({
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index' as const, intersect: false },
@@ -317,6 +329,28 @@ function App() {
             }
             const date = new Date(value);
             return dayjs(date).format('YYYY/MM/DD HH:mm:ss');
+          }
+        }
+      },
+      zoom: {
+        pan: {
+          enabled: true,
+          mode: 'x'
+        },
+        zoom: {
+          mode: 'x',
+          drag: {
+            enabled: true,
+            borderColor: 'rgba(79, 70, 229, 0.8)',
+            borderWidth: 1,
+            backgroundColor: 'rgba(79, 70, 229, 0.15)'
+          },
+          wheel: {
+            enabled: true,
+            modifierKey: 'ctrl'
+          },
+          pinch: {
+            enabled: true
           }
         }
       }
@@ -413,6 +447,10 @@ function App() {
 
   const clearAll = () => updateAllVisibility(false);
 
+  const handleResetZoom = useCallback(() => {
+    chartRef.current?.resetZoom();
+  }, []);
+
   const seriesEntries = parsedData ? Object.keys(parsedData.series) : [];
 
   return (
@@ -458,6 +496,9 @@ function App() {
                 <button type="button" onClick={clearAll}>
                   全解除
                 </button>
+                <button type="button" onClick={handleResetZoom}>
+                  ズームリセット
+                </button>
               </div>
             </div>
             <div className="series-list">
@@ -475,7 +516,7 @@ function App() {
           </section>
 
           <section className="chart-section">
-            <Line options={chartOptions} data={chartData} />
+            <Line ref={chartRef} options={chartOptions} data={chartData} />
           </section>
         </>
       ) : (
