@@ -1,7 +1,7 @@
 import { ChangeEvent, useCallback, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import { Line } from 'react-chartjs-2';
-import type { ChartData, ChartOptions } from 'chart.js';
+import type { ChartData, ChartOptions, Plugin } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -23,6 +23,32 @@ import pkg from '../package.json';
 
 dayjs.extend(customParseFormat);
 
+const hoverLinePlugin: Plugin<'line'> = {
+  id: 'hoverLine',
+  afterDatasetsDraw: (chart) => {
+    const activeElements = chart.tooltip?.getActiveElements?.() ?? [];
+    if (!activeElements.length) {
+      return;
+    }
+
+    const { ctx, chartArea } = chart;
+    if (!chartArea) {
+      return;
+    }
+
+    const x = activeElements[0].element.x;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, chartArea.top);
+    ctx.lineTo(x, chartArea.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(79, 70, 229, 0.8)';
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.restore();
+  }
+};
+
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -32,7 +58,8 @@ ChartJS.register(
   Tooltip,
   Legend,
   Filler,
-  zoomPlugin
+  zoomPlugin,
+  hoverLinePlugin
 );
 
 type CellValue = string | number | Date | null | undefined;
@@ -318,7 +345,7 @@ function App() {
   const chartOptions = useMemo<ChartOptions<'line'>>(() => ({
     responsive: true,
     maintainAspectRatio: false,
-    interaction: { mode: 'index' as const, intersect: false },
+    interaction: { mode: 'index' as const, intersect: false, axis: 'x' },
     plugins: {
       legend: {
         display: false
