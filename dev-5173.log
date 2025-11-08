@@ -1,0 +1,9 @@
+
+> monitor-graph@0.0.0 dev
+> vite --host --port 5173 --strictPort
+
+
+  VITE v5.4.21  ready in 195 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://10.0.2.15:5173/

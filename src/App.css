@@ -1,0 +1,163 @@
+.app-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  border-bottom: 1px solid #cbd5f5;
+  padding-bottom: 12px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 2.2rem;
+  color: #0f172a;
+}
+
+.app-subtitle {
+  margin: 0;
+  color: #475569;
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.file-name {
+  font-size: 0.95rem;
+  color: #475569;
+}
+
+.uploader {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.file-label {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.uploader input[type='file'] {
+  padding: 10px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #64748b;
+}
+
+.error {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.loading {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.series-panel,
+.chart-section {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  padding: 20px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: #0f172a;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.panel-actions button {
+  border: 1px solid #94a3b8;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.series-list {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.series-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.chart-section {
+  min-height: 460px;
+}
+
+.chart-section canvas {
+  max-height: 420px;
+}
+
+.placeholder {
+  padding: 24px;
+  border-radius: 16px;
+  text-align: center;
+  background: #fff;
+  border: 1px dashed #cbd5f5;
+  color: #475569;
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 24px 16px 32px;
+  }
+
+  .series-list {
+    grid-template-columns: 1fr;
+  }
+}

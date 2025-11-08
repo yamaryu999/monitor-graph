@@ -1,0 +1,4 @@
+# Monitor Graph Overview
+- Purpose: single-page React/Vite app that uploads UART communication log files (CSV/XLSX), parses the log (date, time, data columns), and plots interactive time-series charts deployable to Netlify.
+- Tech stack: Vite + React 18 + TypeScript, Chart.js via react-chartjs-2 for visualization, PapaParse + SheetJS (xlsx) for parsing CSV/XLSX, dayjs for timestamp handling, vanilla CSS for styling.
+- Structure: lightweight Vite scaffold with `src/App.tsx` housing upload/parsing/chart UI, `src/main.tsx` bootstrapping React, and plain CSS files (`src/App.css`, `src/index.css`). Netlify config at `netlify.toml`.
