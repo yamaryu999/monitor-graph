@@ -1088,6 +1088,10 @@ function App() {
                   <option value="variability">変動量</option>
                 </select>
               </div>
+              <div className="global-visibility-row">
+                <button type="button" className="btn" onClick={selectAll}>全て表示</button>
+                <button type="button" className="btn" onClick={clearAll}>全て非表示</button>
+              </div>
               {selected.length > 0 && (
                 <div className="selection-toolbar">
                   <span>{selected.length} 件選択中</span>
