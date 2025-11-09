@@ -6,6 +6,7 @@ import type { ChartData, ChartOptions, Plugin, TooltipItem } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
+  Decimation,
   Filler,
   Legend,
   LineElement,
@@ -59,6 +60,7 @@ ChartJS.register(
   Tooltip,
   Legend,
   Filler,
+  Decimation,
   zoomPlugin,
   hoverLinePlugin
 );
@@ -482,6 +484,7 @@ const useChartData = (
     }
 
     const datasetEntries = Object.entries(parsed.series);
+    const totalPoints = parsed.timestamps.length;
 
     return {
       datasets: datasetEntries.map(([label, values], index) => {
@@ -498,9 +501,12 @@ const useChartData = (
           borderColor: colors.border,
           backgroundColor: colors.background,
           spanGaps: true,
-          pointRadius: 2,
+          pointRadius: totalPoints > 1500 ? 0 : 2,
+          pointHoverRadius: 3,
+          pointHitRadius: 3,
           tension: 0.2,
           hidden: !isVisible,
+          parsing: false,
           yAxisID: seriesAxis[label] ?? 'y1'
         };
       })
@@ -553,6 +559,9 @@ function App() {
     return {
     responsive: true,
     maintainAspectRatio: false,
+    parsing: false,
+    normalized: true,
+    animation: false,
     interaction: { mode: 'index' as const, intersect: false, axis: 'x' },
     plugins: {
       legend: {
@@ -586,6 +595,11 @@ function App() {
             return { borderColor: color, backgroundColor: color, borderWidth: 2 };
           }
         }
+      },
+      decimation: {
+        enabled: true,
+        algorithm: 'lttb',
+        samples: 1500
       },
       zoom: {
         pan: {
@@ -621,7 +635,8 @@ function App() {
             hour: 'HH:mm',
             day: 'MM/dd'
           }
-        }
+        },
+        ticks: { maxTicksLimit: 10 }
       },
       y1: {
         type: 'linear' as const,
