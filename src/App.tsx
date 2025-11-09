@@ -80,27 +80,47 @@ ChartJS.register(
 
 const cursorOffsetPositioner: TooltipPositionerFunction<'line'> = function cursorOffset(
   this: TooltipModel<'line'>,
-  items,
+  _items,
   eventPosition
 ) {
   if (!eventPosition) return false;
   const tooltip = this as TooltipModel<'line'>;
   const chartArea = tooltip?.chart?.chartArea;
-  const baseOffsetX = 36;
-  const paddingY = 24;
-  let x = eventPosition.x + baseOffsetX;
-  let y = eventPosition.y;
+  const width = tooltip?.width ?? 160;
+  const height = tooltip?.height ?? 60;
 
-  if (chartArea) {
-    const maxX = chartArea.right - (tooltip.width ?? 0) - 8;
-    if (x > maxX) {
-      x = eventPosition.x - baseOffsetX - (tooltip.width ?? 0);
-    }
-    const minY = chartArea.top + paddingY;
-    const maxY = chartArea.bottom - paddingY;
-    y = Math.min(Math.max(y, minY), maxY);
+  if (!chartArea) {
+    return { x: eventPosition.x + 60, y: Math.max(eventPosition.y - height, 0) };
   }
-  return { x, y };
+
+  const padding = 16;
+  const candidates = [
+    { x: chartArea.left + padding, y: chartArea.top + padding },
+    { x: chartArea.right - width - padding, y: chartArea.top + padding },
+    { x: chartArea.left + padding, y: chartArea.bottom - height - padding },
+    { x: chartArea.right - width - padding, y: chartArea.bottom - height - padding }
+  ];
+
+  const best = candidates.reduce(
+    (acc, pos) => {
+      const dist = (pos.x - eventPosition.x) ** 2 + (pos.y - eventPosition.y) ** 2;
+      if (dist > acc.distance) {
+        return { distance: dist, position: pos };
+      }
+      return acc;
+    },
+    { distance: -Infinity, position: candidates[0] }
+  );
+
+  const minX = chartArea.left + padding;
+  const maxX = chartArea.right - width - padding;
+  const minY = chartArea.top + padding;
+  const maxY = chartArea.bottom - height - padding;
+
+  return {
+    x: Math.min(Math.max(best.position.x, minX), maxX),
+    y: Math.min(Math.max(best.position.y, minY), maxY)
+  };
 };
 
 Tooltip.positioners.cursorOffset = cursorOffsetPositioner;
