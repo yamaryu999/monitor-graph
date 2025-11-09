@@ -1,0 +1,6 @@
+
+> monitor-graph@0.0.6 preview
+> vite preview --host --port 5173 --strictPort
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://10.0.2.15:5173/

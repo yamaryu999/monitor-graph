@@ -1,7 +1,8 @@
-import { ChangeEvent, useCallback, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, MouseEvent, useCallback, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
+import Encoding from 'encoding-japanese';
 import { Line } from 'react-chartjs-2';
-import type { ChartData, ChartOptions, Plugin } from 'chart.js';
+import type { ChartData, ChartOptions, Plugin, TooltipItem } from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -70,6 +71,53 @@ type ParsedData = {
   series: Record<string, (number | null)[]>;
 };
 
+type ParsedDataset = {
+  data: ParsedData;
+  fileName: string;
+  label: string;
+};
+
+const annotateDatasetLabels = (datasets: ParsedDataset[]): ParsedDataset[] => {
+  const counts = new Map<string, number>();
+  return datasets.map((d, i) => {
+    const base = d.label || d.fileName || `ログ${i + 1}`;
+    const n = (counts.get(base) ?? 0) + 1;
+    counts.set(base, n);
+    return { ...d, label: n > 1 ? `${base} (${n})` : base };
+  });
+};
+
+const mergeParsedDatasets = (datasets: ParsedDataset[]): ParsedData => {
+  if (datasets.length === 0) throw new Error('解析結果がありません。');
+  if (datasets.length === 1) return datasets[0].data;
+
+  const tsMap = new Map<number, Date>();
+  datasets.forEach(({ data }) => data.timestamps.forEach((t) => {
+    const k = t.getTime();
+    if (!tsMap.has(k)) tsMap.set(k, t);
+  }));
+  const times = Array.from(tsMap.keys()).sort((a, b) => a - b);
+  const timestamps = times.map((k) => tsMap.get(k) ?? new Date(k));
+  const unionIndex = new Map<number, number>();
+  times.forEach((t, i) => unionIndex.set(t, i));
+
+  const merged: Record<string, (number | null)[]> = {};
+  datasets.forEach(({ data, label }) => {
+    const idx = new Map<number, number>();
+    data.timestamps.forEach((t, i) => idx.set(t.getTime(), i));
+    Object.entries(data.series).forEach(([name, vals]) => {
+      const key = `[${label}] ${name}`;
+      const arr = new Array(timestamps.length).fill(null) as (number | null)[];
+      idx.forEach((src, tk) => {
+        const ui = unionIndex.get(tk);
+        if (ui !== undefined) arr[ui] = vals[src] ?? null;
+      });
+      merged[key] = arr;
+    });
+  });
+  return { timestamps, series: merged };
+};
+
 const AXIS_KEYS = ['y1', 'y2', 'y3'] as const;
 type AxisKey = (typeof AXIS_KEYS)[number];
 
@@ -113,6 +161,64 @@ const colorFromIndex = (index: number) => {
     border: `hsl(${hue} 70% 45%)`,
     background: `hsla(${hue} 70% 45% / 0.25)`
   };
+};
+
+const extractUnit = (name: string): string | undefined => {
+  const m = name.match(/\[(.+?)\]/);
+  return m ? m[1].trim() : undefined;
+};
+
+const KEYWORD_GROUPS = [
+  { id: 'temperature', label: '温度 / Temp', regex: /(温度|temp|heat|℃|°c)/i },
+  { id: 'humidity', label: '湿度 / Humidity', regex: /(湿度|humidity|%)/i },
+  { id: 'pressure', label: '圧力 / Pressure', regex: /(圧|pressure|mpa|kpa)/i },
+  { id: 'valve', label: '弁開度 / Valve', regex: /(弁|valve|開度|pulse|duty)/i },
+  { id: 'status', label: 'ステータス', regex: /(status|ステータス|状態)/i },
+  { id: 'code', label: 'コード/警報', regex: /(code|警報|アラーム)/i }
+];
+
+const deriveSeriesGroup = (name: string) => {
+  const unit = extractUnit(name);
+  const baseName = name.replace(/\s*\[.+?\]\s*$/, '').trim();
+  if (unit) {
+    return { groupId: `unit:${unit}`, groupLabel: `単位: ${unit}`, unit, baseName: baseName || name };
+  }
+  for (const g of KEYWORD_GROUPS) {
+    if (g.regex.test(name)) return { groupId: g.id, groupLabel: g.label, unit: undefined, baseName: baseName || name };
+  }
+  return { groupId: 'others', groupLabel: 'その他', unit: undefined, baseName: baseName || name };
+};
+
+const computeLastValue = (values: (number | null)[]): number | null => {
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    const v = values[i];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  return null;
+};
+
+const computeVariability = (values: (number | null)[]): number => {
+  const arr = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (arr.length < 2) return 0;
+  const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
+  const varc = arr.reduce((s, v) => s + (v - mean) ** 2, 0) / arr.length;
+  return Math.sqrt(varc);
+};
+
+const parseSeriesName = (name: string) => {
+  const m = name.match(/^\[(.+?)\]\s+(.*)$/);
+  if (m) return { fileLabel: m[1], seriesName: m[2] || name };
+  return { fileLabel: 'ログ1', seriesName: name };
+};
+
+const resolveColor = (color: any, dataIndex: number): string => {
+  if (!color) return '#888';
+  if (typeof color === 'string') return color;
+  if (Array.isArray(color)) {
+    const v = color[dataIndex % color.length];
+    return typeof v === 'string' ? v : '#888';
+  }
+  return '#888';
 };
 
 const sanitizeRows = (rows: DataRow[]): DataRow[] =>
@@ -209,7 +315,8 @@ const parseTimeCell = (value: CellValue): TimeParts => {
       return defaultTime;
     }
 
-    for (const format of TIME_FORMATS) {
+    const formats = ['HH:mm:ss.SSS', 'HH:mm:ss.SS', 'HH:mm:ss.S', 'HH:mm:ss', 'HH:mm', 'HHmmss', 'HHmm'];
+    for (const format of formats) {
       const candidate = dayjs(trimmed, format, true);
       if (candidate.isValid()) {
         return {
@@ -235,30 +342,45 @@ const parseTimeCell = (value: CellValue): TimeParts => {
   return defaultTime;
 };
 
-const composeTimestamp = (dateCell: CellValue, timeCell: CellValue): Date | null => {
-  const datePart = parseDateCell(dateCell);
-  if (!datePart) {
-    return null;
+const composeTimestamp = (primaryCell: CellValue, secondaryCell: CellValue): Date | null => {
+  const primaryDate = parseDateCell(primaryCell);
+  const secondaryTime = parseTimeCell(secondaryCell);
+
+  if (primaryDate) {
+    const timeParts = secondaryTime ?? parseTimeCell(primaryCell) ?? defaultTime;
+    return primaryDate
+      .hour(timeParts.hour)
+      .minute(timeParts.minute)
+      .second(timeParts.second)
+      .millisecond(timeParts.millisecond)
+      .toDate();
   }
 
-  const timePart = parseTimeCell(timeCell);
+  const secondaryDate = parseDateCell(secondaryCell);
+  if (secondaryDate) {
+    const firstTime = parseTimeCell(primaryCell);
+    if (firstTime) {
+      return secondaryDate
+        .hour(firstTime.hour)
+        .minute(firstTime.minute)
+        .second(firstTime.second)
+        .millisecond(firstTime.millisecond)
+        .toDate();
+    }
+    return secondaryDate.toDate();
+  }
 
-  return datePart
-    .hour(timePart.hour)
-    .minute(timePart.minute)
-    .second(timePart.second)
-    .millisecond(timePart.millisecond)
-    .toDate();
+  return null;
 };
 
 const buildParsedData = (rows: DataRow[]): ParsedData => {
   const meaningfulRows = sanitizeRows(rows);
-
-  if (meaningfulRows.length < 2) {
-    throw new Error('有効なデータ行が見つかりません。');
+  const headerIndex = meaningfulRows.findIndex((row) => row.length >= 3);
+  if (headerIndex === -1) {
+    throw new Error('ヘッダー行が見つかりませんでした。');
   }
 
-  const headers = meaningfulRows[0].map((cell) => (cell ?? '').toString().trim());
+  const headers = meaningfulRows[headerIndex].map((cell) => (cell ?? '').toString().trim());
   if (headers.length < 3) {
     throw new Error('最低でも日付、時刻、1つ以上のデータ列が必要です。');
   }
@@ -276,8 +398,9 @@ const buildParsedData = (rows: DataRow[]): ParsedData => {
 
   const timestamps: Date[] = [];
 
-  for (let i = 1; i < meaningfulRows.length; i += 1) {
-    const row = meaningfulRows[i];
+  const dataRows = meaningfulRows.slice(headerIndex + 1);
+  for (let i = 0; i < dataRows.length; i += 1) {
+    const row = dataRows[i];
     const timestamp = composeTimestamp(row[0], row[1]);
     if (!timestamp) {
       continue;
@@ -297,9 +420,30 @@ const buildParsedData = (rows: DataRow[]): ParsedData => {
   return { timestamps, series };
 };
 
-const parseCsvFile = (file: File): Promise<DataRow[]> =>
-  new Promise((resolve, reject) => {
-    Papa.parse<string[]>(file, {
+const decodeCsvContent = async (file: File): Promise<string> => {
+  const buffer = await file.arrayBuffer();
+  const view = new Uint8Array(buffer);
+  let text = '';
+  try {
+    text = new TextDecoder('utf-8', { fatal: false }).decode(view);
+  } catch {}
+  if (!text || text.includes('\uFFFD')) {
+    try {
+      const detected = Encoding.detect(view);
+      text = Encoding.convert(view, { to: 'UNICODE', from: detected ?? undefined, type: 'string' }) as string;
+    } catch {
+      try {
+        text = new TextDecoder('shift_jis').decode(view);
+      } catch {}
+    }
+  }
+  return text;
+};
+
+const parseCsvFile = async (file: File): Promise<DataRow[]> => {
+  const text = await decodeCsvContent(file);
+  return new Promise((resolve, reject) => {
+    Papa.parse<string[]>(text, {
       skipEmptyLines: 'greedy',
       complete: (results) => {
         if (results.errors.length) {
@@ -311,6 +455,7 @@ const parseCsvFile = (file: File): Promise<DataRow[]> =>
       error: (error) => reject(error)
     });
   });
+};
 
 const parseXlsxFile = async (file: File): Promise<DataRow[]> => {
   const buffer = await file.arrayBuffer();
@@ -365,12 +510,21 @@ function App() {
   const [controlsOpen, setControlsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
   const [bulkAxis, setBulkAxis] = useState<AxisKey>('y1');
+  const [showTooltip, setShowTooltip] = useState(true);
+  const [loadedFiles, setLoadedFiles] = useState<{ fileName: string; label: string }[]>([]);
   const [fileName, setFileName] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [inputKey, setInputKey] = useState(Date.now());
   const appVersion = (pkg as { version?: string }).version ?? '0.0.0';
   const chartRef = useRef<ChartJS<'line'> | null>(null);
+  const fullRef = useRef<ChartJS<'line'> | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [sortMode, setSortMode] = useState<'name' | 'latest' | 'variability'>('name');
+  const [selected, setSelected] = useState<string[]>([]);
+  const lastClickedIndex = useRef<number | null>(null);
+  const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>({});
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const chartData = useChartData(parsedData, seriesVisibility, seriesAxis);
 
@@ -400,13 +554,31 @@ function App() {
         display: false
       },
       tooltip: {
+        enabled: showTooltip,
+        intersect: false,
+        mode: 'index',
+        displayColors: true,
+        usePointStyle: true,
         callbacks: {
-          title(items: any[]) {
-            const value = items[0]?.parsed?.x;
-            if (value === undefined || value === null) {
-              return '';
-            }
+          title(items: TooltipItem<'line'>[]) {
+            const value = items[0]?.parsed?.x as number | undefined;
+            if (value === undefined || value === null) return '';
             return dayjs(value).format('YYYY/MM/DD HH:mm:ss');
+          },
+          label(context) {
+            const label = context.dataset?.label ?? '';
+            const dsIndex = context.datasetIndex ?? 0;
+            if (!context.chart.isDatasetVisible(dsIndex)) return undefined;
+            if (seriesVisibility[label] === false) return undefined;
+            return `${label}: ${context.formattedValue}`;
+          },
+          labelColor(context) {
+            const label = context.dataset?.label ?? '';
+            const dsIndex = context.datasetIndex ?? 0;
+            if (!context.chart.isDatasetVisible(dsIndex)) return undefined;
+            if (seriesVisibility[label] === false) return undefined;
+            const color = resolveColor(context.dataset?.borderColor, context.dataIndex ?? 0);
+            return { borderColor: color, backgroundColor: color, borderWidth: 2 };
           }
         }
       },
@@ -488,7 +660,7 @@ function App() {
       }
     }
   };
-  }, [axisRanges]);
+  }, [axisRanges, seriesVisibility, showTooltip]);
 
   const resetState = () => {
     setParsedData(null);
@@ -510,37 +682,30 @@ function App() {
   };
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
+    const files = event.target.files ? Array.from(event.target.files).slice(0, 2) : [];
+    if (!files.length) return;
     setIsLoading(true);
     setErrorMessage(null);
     setInputKey(Date.now());
-
     try {
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      let rows: DataRow[];
-
-      if (extension === 'csv') {
-        rows = await parseCsvFile(file);
-      } else if (extension === 'xlsx' || extension === 'xls') {
-        rows = await parseXlsxFile(file);
-      } else {
-        throw new Error('CSV もしくは XLSX ファイルを選択してください。');
+      const datasets: ParsedDataset[] = [];
+      for (const file of files) {
+        const ext = file.name.split('.').pop()?.toLowerCase();
+        let rows: DataRow[];
+        if (ext === 'csv') rows = await parseCsvFile(file);
+        else if (ext === 'xlsx' || ext === 'xls') rows = await parseXlsxFile(file);
+        else throw new Error('CSV もしくは XLSX ファイルを選択してください。');
+        const parsed = buildParsedData(rows);
+        datasets.push({ data: parsed, fileName: file.name, label: file.name });
       }
-
-      const parsed = buildParsedData(rows);
-      setParsedData(parsed);
-      initializeSeriesState(parsed.series);
-      setFileName(file.name);
+      const labeled = annotateDatasetLabels(datasets);
+      const merged = mergeParsedDatasets(labeled);
+      setParsedData(merged);
+      initializeSeriesState(merged.series);
+      setFileName(labeled.map((d) => d.fileName).join(', '));
+      setLoadedFiles(labeled.map(({ fileName, label }) => ({ fileName, label })));
     } catch (error) {
-      if (error instanceof Error) {
-        setErrorMessage(error.message);
-      } else {
-        setErrorMessage('ファイルの読み込みに失敗しました。');
-      }
+      setErrorMessage(error instanceof Error ? error.message : 'ファイルの読み込みに失敗しました。');
       resetState();
     } finally {
       setIsLoading(false);
@@ -588,23 +753,81 @@ function App() {
 
   const handleResetZoom = useCallback(() => {
     chartRef.current?.resetZoom();
+    fullRef.current?.resetZoom();
   }, []);
 
   const seriesEntries = parsedData ? Object.keys(parsedData.series) : [];
-  const filteredSeriesEntries = useMemo(() => {
-    if (!filterText) return seriesEntries;
+  const descriptors = useMemo(() => {
+    if (!parsedData) return [] as Array<{
+      name: string;
+      fileLabel: string;
+      seriesName: string;
+      groupId: string;
+      groupLabel: string;
+      unit?: string;
+      lastValue: number | null;
+      variability: number;
+    }>;
+    return seriesEntries.map((name) => {
+      const { fileLabel, seriesName } = parseSeriesName(name);
+      const g = deriveSeriesGroup(seriesName);
+      const values = parsedData.series[name] ?? [];
+      return {
+        name,
+        fileLabel,
+        seriesName,
+        groupId: g.groupId,
+        groupLabel: g.groupLabel,
+        unit: g.unit,
+        lastValue: computeLastValue(values),
+        variability: computeVariability(values)
+      };
+    });
+  }, [parsedData, seriesEntries]);
+
+  const filteredDescriptors = useMemo(() => {
+    if (!filterText) return descriptors;
     const q = filterText.toLowerCase();
-    return seriesEntries.filter((name) => name.toLowerCase().includes(q));
-  }, [filterText, seriesEntries]);
+    return descriptors.filter((d) => d.name.toLowerCase().includes(q));
+  }, [descriptors, filterText]);
+
+  const sortedDescriptors = useMemo(() => {
+    const arr = [...filteredDescriptors];
+    switch (sortMode) {
+      case 'latest':
+        arr.sort((a, b) => (b.lastValue ?? -Infinity) - (a.lastValue ?? -Infinity));
+        break;
+      case 'variability':
+        arr.sort((a, b) => b.variability - a.variability);
+        break;
+      default:
+        arr.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+    }
+    return arr;
+  }, [filteredDescriptors, sortMode]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, Map<string, { groupLabel: string; unit?: string; items: typeof sortedDescriptors }>>();
+    sortedDescriptors.forEach((d) => {
+      if (!map.has(d.fileLabel)) map.set(d.fileLabel, new Map());
+      const gm = map.get(d.fileLabel)!;
+      if (!gm.has(d.groupId)) gm.set(d.groupId, { groupLabel: d.groupLabel, unit: d.unit, items: [] as any });
+      gm.get(d.groupId)!.items.push(d);
+    });
+    return map;
+  }, [sortedDescriptors]);
+
+  const allNames = useMemo(() => descriptors.map((d) => d.name), [descriptors]);
   const visibleCount = useMemo(
-    () => seriesEntries.filter((n) => seriesVisibility[n] ?? true).length,
-    [seriesEntries, seriesVisibility]
+    () => allNames.filter((n) => seriesVisibility[n] ?? true).length,
+    [allNames, seriesVisibility]
   );
 
   const setVisibilityForFiltered = (value: boolean) => {
     setSeriesVisibility((current) => {
       const next = { ...current } as Record<string, boolean>;
-      filteredSeriesEntries.forEach((name) => {
+      sortedDescriptors.forEach(({ name }) => {
         next[name] = value;
       });
       return next;
@@ -614,9 +837,78 @@ function App() {
   const applyAxisToFiltered = (axisKey: AxisKey) => {
     setSeriesAxis((current) => {
       const next = { ...current } as Record<string, AxisKey>;
-      filteredSeriesEntries.forEach((name) => {
+      sortedDescriptors.forEach(({ name }) => {
         next[name] = axisKey;
       });
+      return next;
+    });
+  };
+
+  // Selection handling (Shift+Click)
+  const toggleSelect = (name: string, index: number, e?: MouseEvent) => {
+    const isShift = !!e?.shiftKey;
+    setSelected((curr) => {
+      if (isShift && lastClickedIndex.current !== null) {
+        const start = Math.min(lastClickedIndex.current, index);
+        const end = Math.max(lastClickedIndex.current, index);
+        const range = sortedDescriptors.slice(start, end + 1).map((d) => d.name);
+        const set = new Set(curr);
+        range.forEach((n) => set.add(n));
+        return Array.from(set);
+      }
+      const set = new Set(curr);
+      if (set.has(name)) set.delete(name); else set.add(name);
+      lastClickedIndex.current = index;
+      return Array.from(set);
+    });
+  };
+
+  const clearSelection = () => setSelected([]);
+
+  const setVisibilityForNames = (names: string[], value: boolean) => {
+    setSeriesVisibility((current) => {
+      const next = { ...current } as Record<string, boolean>;
+      names.forEach((n) => { next[n] = value; });
+      return next;
+    });
+  };
+
+  const applyAxisToNames = (names: string[], axisKey: AxisKey) => {
+    setSeriesAxis((current) => {
+      const next = { ...current } as Record<string, AxisKey>;
+      names.forEach((n) => { next[n] = axisKey; });
+      return next;
+    });
+  };
+
+  const setCollapsedAll = (collapsed: boolean) => {
+    const files: Record<string, boolean> = {};
+    const groups: Record<string, boolean> = {};
+    grouped.forEach((gm, file) => {
+      files[file] = collapsed;
+      gm.forEach((_, gid) => { groups[`${file}::${gid}`] = collapsed; });
+    });
+    setCollapsedFiles(files);
+    setCollapsedGroups(groups);
+  };
+
+  const autoAssignByUnit = () => {
+    // Assign each encountered unit to next available axis, stable across run
+    const unitToAxis = new Map<string, AxisKey>();
+    const order: AxisKey[] = ['y1', 'y2', 'y3'];
+    let ptr = 0;
+    const pick = (unit: string | undefined): AxisKey => {
+      if (!unit) return 'y1';
+      if (!unitToAxis.has(unit)) {
+        unitToAxis.set(unit, order[Math.min(ptr, order.length - 1)]);
+        ptr = Math.min(ptr + 1, order.length - 1);
+      }
+      return unitToAxis.get(unit)!;
+    };
+    const names = descriptors.map((d) => d.name);
+    setSeriesAxis((current) => {
+      const next = { ...current } as Record<string, AxisKey>;
+      descriptors.forEach((d) => { next[d.name] = pick(d.unit); });
       return next;
     });
   };
@@ -630,6 +922,16 @@ function App() {
         </div>
         {fileName && <span className="file-name">{fileName}</span>}
       </header>
+      {loadedFiles.length > 0 && (
+        <div className="file-chip-row">
+          {loadedFiles.map((f) => (
+            <div key={f.fileName} className="file-chip">
+              <div className="file-chip-label">{f.label}</div>
+              <div className="file-chip-name">{f.fileName}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <section className="uploader">
         <label className="file-label" htmlFor="log-file">
@@ -639,6 +941,7 @@ function App() {
           id="log-file"
           key={inputKey}
           type="file"
+          multiple
           accept=".csv,.xlsx,.xls"
           onChange={handleFile}
           disabled={isLoading}
@@ -663,6 +966,12 @@ function App() {
               </div>
               <div className="right">
                 <span style={{ color: '#64748b', fontSize: '0.9rem' }}>表示 {visibleCount}/{seriesEntries.length}</span>
+                <button type="button" className="btn" onClick={() => setShowTooltip((s) => !s)}>
+                  ツールチップ {showTooltip ? 'ON' : 'OFF'}
+                </button>
+                <button type="button" className="btn" onClick={() => setIsFullscreen(true)}>
+                  全画面表示
+                </button>
                 <button type="button" className="btn" onClick={() => setControlsOpen(true)}>
                   表示・軸設定
                 </button>
@@ -672,12 +981,37 @@ function App() {
             <Line ref={chartRef} options={chartOptions} data={chartData} />
           </section>
 
+          {isFullscreen && (
+            <div className="fullscreen-overlay">
+              <div className="fullscreen-toolbar">
+                <div className="left">
+                  <button type="button" className="btn" onClick={handleResetZoom}>ズームリセット</button>
+                  <button type="button" className="btn" onClick={() => setShowTooltip((s) => !s)}>
+                    ツールチップ {showTooltip ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+                <div className="right">
+                  <button type="button" className="btn" onClick={() => setControlsOpen(true)}>データ/軸設定</button>
+                  <button type="button" className="btn" onClick={() => setIsFullscreen(false)}>閉じる</button>
+                </div>
+              </div>
+              <div className="fullscreen-body">
+                <Line ref={fullRef} options={chartOptions} data={chartData} />
+              </div>
+            </div>
+          )}
+
           {/* Side controls panel */}
           <div className={"backdrop" + (controlsOpen ? ' show' : '')} onClick={() => setControlsOpen(false)} />
           <aside className={"side-panel" + (controlsOpen ? ' open' : '')} aria-label="データ/軸設定パネル">
             <div className="side-header">
               <strong>データ/軸設定</strong>
-              <button type="button" className="btn" onClick={() => setControlsOpen(false)}>閉じる</button>
+              <div className="side-header-actions">
+                <button type="button" className="btn" onClick={() => setCollapsedAll(true)}>全て折りたたむ</button>
+                <button type="button" className="btn" onClick={() => setCollapsedAll(false)}>全て展開</button>
+                <button type="button" className="btn" onClick={autoAssignByUnit}>単位で自動割当</button>
+                <button type="button" className="btn" onClick={() => setControlsOpen(false)}>閉じる</button>
+              </div>
             </div>
             <div className="side-body">
               <div className="filter-row">
@@ -687,41 +1021,88 @@ function App() {
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
                 />
-              </div>
-
-              <div className="bulk-row">
-                <button className="btn" type="button" onClick={() => setVisibilityForFiltered(true)}>表示(フィルター)</button>
-                <button className="btn" type="button" onClick={() => setVisibilityForFiltered(false)}>非表示(フィルター)</button>
-                <select className="axis-select" value={bulkAxis} onChange={(e) => setBulkAxis(e.target.value as AxisKey)}>
-                  {AXIS_OPTIONS.map((o) => (
-                    <option key={o.key} value={o.key}>{o.label}</option>
-                  ))}
+                <select className="sort-select" value={sortMode} onChange={(e) => setSortMode(e.target.value as any)}>
+                  <option value="name">名前順</option>
+                  <option value="latest">最近値</option>
+                  <option value="variability">変動量</option>
                 </select>
-                <button className="btn" type="button" onClick={() => applyAxisToFiltered(bulkAxis)}>軸を一括適用(フィルター)</button>
               </div>
+              {selected.length > 0 && (
+                <div className="selection-toolbar">
+                  <span>{selected.length} 件選択中</span>
+                  <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, true)}>表示</button>
+                  <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, false)}>非表示</button>
+                  <div className="axis-chips">
+                    {AXIS_KEYS.map((k) => (
+                      <button key={k} type="button" className={'chip ' + k} onClick={() => applyAxisToNames(selected, k)}>{AXIS_CONFIG[k].label}</button>
+                    ))}
+                  </div>
+                  <button className="btn" type="button" onClick={clearSelection}>選択解除</button>
+                </div>
+              )}
 
-              <div className="series-list">
-                {filteredSeriesEntries.map((name) => (
-                  <div key={name} className="series-item">
-                    <label className="series-toggle">
-                      <input
-                        type="checkbox"
-                        checked={seriesVisibility[name] ?? true}
-                        onChange={() => toggleSeries(name)}
-                      />
-                      <span>{name}</span>
-                    </label>
-                    <select
-                      className="axis-select"
-                      value={seriesAxis[name] ?? 'y1'}
-                      onChange={(event) => handleAxisChange(name, event.target.value as AxisKey)}
-                    >
-                      {AXIS_OPTIONS.map((option) => (
-                        <option key={option.key} value={option.key}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+              {/* Grouped list */}
+              <div className="grouped-list">
+                {Array.from(grouped.entries()).map(([file, gm]) => (
+                  <div key={file} className="file-group-card">
+                    <div className="file-group-header" onClick={() => setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) }))}>
+                      <span className="file-name-strong">{file}</span>
+                      <span className="spacer" />
+                      <span className="muted">{Array.from(gm.values()).reduce((a, g) => a + g.items.length, 0)} 件</span>
+                      <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) })); }}>
+                        {(collapsedFiles[file] ?? true) ? '展開' : '折りたたみ'}
+                      </button>
+                    </div>
+                    {!(collapsedFiles[file] ?? true) && (
+                      <div className="group-list">
+                        {Array.from(gm.entries()).map(([gid, group]) => (
+                          <div key={gid} className="group-card">
+                            <div className="group-header" onClick={() => setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) }))}>
+                              <strong>{group.groupLabel}</strong>
+                              {group.unit && <span className="unit-badge">[{group.unit}]</span>}
+                              <span className="spacer" />
+                              <div className="group-actions" onClick={(e) => e.stopPropagation()}>
+                                <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), true)}>表示</button>
+                                <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), false)}>非表示</button>
+                                <div className="axis-chips">
+                                  {AXIS_KEYS.map((k) => (
+                                    <button key={k} type="button" className={'chip small ' + k} onClick={() => applyAxisToNames(group.items.map(i => i.name), k)}>{k.toUpperCase()}</button>
+                                  ))}
+                                </div>
+                              </div>
+                              <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) })); }}>
+                                {(collapsedGroups[`${file}::${gid}`] ?? true) ? '展開' : '折りたたみ'}
+                              </button>
+                            </div>
+                            {!(collapsedGroups[`${file}::${gid}`] ?? true) && (
+                              <div className="series-list">
+                                {group.items.map((d, idx) => {
+                                  const indexInFlat = sortedDescriptors.findIndex((x) => x.name === d.name);
+                                  const isSelected = selected.includes(d.name);
+                                  return (
+                                    <div key={d.name} className={'series-item' + (isSelected ? ' selected' : '')} onClick={(e) => toggleSelect(d.name, indexInFlat, e as any)}>
+                                      <label className="series-toggle" onClick={(e) => e.stopPropagation()}>
+                                        <input
+                                          type="checkbox"
+                                          checked={seriesVisibility[d.name] ?? true}
+                                          onChange={() => toggleSeries(d.name)}
+                                        />
+                                        <span>{d.name}</span>
+                                      </label>
+                                      <div className="axis-chips" onClick={(e) => e.stopPropagation()}>
+                                        {AXIS_KEYS.map((k) => (
+                                          <button key={k} type="button" className={'chip ' + (seriesAxis[d.name] === k ? 'active ' : '') + k} onClick={() => handleAxisChange(d.name, k)}>{k.toUpperCase()}</button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
