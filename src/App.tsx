@@ -287,7 +287,9 @@ const parseDateCell = (value: CellValue): dayjs.Dayjs | null => {
   return null;
 };
 
-const parseTimeCell = (value: CellValue): TimeParts => {
+const normalizeExcelString = (input: string): string => input.replace(/^['＇‘’"＂]+/, '').trim();
+
+const parseTimeCell = (value: CellValue): TimeParts | null => {
   if (value instanceof Date) {
     return {
       hour: value.getHours(),
@@ -312,12 +314,15 @@ const parseTimeCell = (value: CellValue): TimeParts => {
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!trimmed) {
-      return defaultTime;
+      return null;
     }
+
+    const normalized = normalizeExcelString(trimmed);
+    if (!normalized) return null;
 
     const formats = ['HH:mm:ss.SSS', 'HH:mm:ss.SS', 'HH:mm:ss.S', 'HH:mm:ss', 'HH:mm', 'HHmmss', 'HHmm'];
     for (const format of formats) {
-      const candidate = dayjs(trimmed, format, true);
+      const candidate = dayjs(normalized, format, true);
       if (candidate.isValid()) {
         return {
           hour: candidate.hour(),
@@ -328,7 +333,7 @@ const parseTimeCell = (value: CellValue): TimeParts => {
       }
     }
 
-    const fallback = dayjs(`1970-01-01T${trimmed}`);
+    const fallback = dayjs(`1970-01-01T${normalized}`);
     if (fallback.isValid()) {
       return {
         hour: fallback.hour(),
@@ -339,7 +344,7 @@ const parseTimeCell = (value: CellValue): TimeParts => {
     }
   }
 
-  return defaultTime;
+  return null;
 };
 
 const composeTimestamp = (primaryCell: CellValue, secondaryCell: CellValue): Date | null => {
