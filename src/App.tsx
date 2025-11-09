@@ -2,7 +2,14 @@ import { ChangeEvent, MouseEvent, useCallback, useMemo, useRef, useState } from 
 import Papa from 'papaparse';
 import Encoding from 'encoding-japanese';
 import { Line } from 'react-chartjs-2';
-import type { ChartData, ChartOptions, Plugin, TooltipItem } from 'chart.js';
+import type {
+  ChartData,
+  ChartOptions,
+  Plugin,
+  TooltipItem,
+  TooltipModel,
+  TooltipPositionerFunction
+} from 'chart.js';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -24,6 +31,12 @@ import './App.css';
 import pkg from '../package.json';
 
 dayjs.extend(customParseFormat);
+
+declare module 'chart.js' {
+  interface TooltipPositionerMap {
+    cursorOffset: TooltipPositionerFunction<'line'>;
+  }
+}
 
 const hoverLinePlugin: Plugin<'line'> = {
   id: 'hoverLine',
@@ -64,6 +77,33 @@ ChartJS.register(
   zoomPlugin,
   hoverLinePlugin
 );
+
+const cursorOffsetPositioner: TooltipPositionerFunction<'line'> = function cursorOffset(
+  this: TooltipModel<'line'>,
+  items,
+  eventPosition
+) {
+  if (!eventPosition) return false;
+  const tooltip = this as TooltipModel<'line'>;
+  const chartArea = tooltip?.chart?.chartArea;
+  const baseOffsetX = 36;
+  const paddingY = 24;
+  let x = eventPosition.x + baseOffsetX;
+  let y = eventPosition.y;
+
+  if (chartArea) {
+    const maxX = chartArea.right - (tooltip.width ?? 0) - 8;
+    if (x > maxX) {
+      x = eventPosition.x - baseOffsetX - (tooltip.width ?? 0);
+    }
+    const minY = chartArea.top + paddingY;
+    const maxY = chartArea.bottom - paddingY;
+    y = Math.min(Math.max(y, minY), maxY);
+  }
+  return { x, y };
+};
+
+Tooltip.positioners.cursorOffset = cursorOffsetPositioner;
 
 type CellValue = string | number | Date | null | undefined;
 type DataRow = CellValue[];
@@ -573,6 +613,7 @@ function App() {
         mode: 'index',
         displayColors: true,
         usePointStyle: true,
+        position: 'cursorOffset' as const,
         callbacks: {
           title(items: TooltipItem<'line'>[]) {
             const value = items[0]?.parsed?.x as number | undefined;
