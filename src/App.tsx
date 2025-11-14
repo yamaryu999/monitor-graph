@@ -751,6 +751,10 @@ function App() {
     setFileName('');
   };
 
+  const resetAxisRanges = () => {
+    setAxisRanges(createAxisRangeState());
+  };
+
   const initializeSeriesState = (series: Record<string, (number | null)[]>) => {
     const visibility: Record<string, boolean> = {};
     const axis: Record<string, AxisKey> = {};
@@ -1192,33 +1196,57 @@ function App() {
                 ))}
               </div>
 
-              <div className="axis-range-panel">
-                <div className="axis-range-grid">
-                  {AXIS_KEYS.map((key) => (
-                    <div key={key} className="axis-range-card">
-                      <p className="axis-range-title">{AXIS_CONFIG[key].label}</p>
-                      <div className="axis-range-inputs">
-                        <label>
-                          <span>最小値</span>
-                          <input
-                            type="number"
-                            placeholder="auto"
-                            value={axisRanges[key]?.min ?? ''}
-                            onChange={(event) => handleAxisRangeChange(key, 'min', event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          <span>最大値</span>
-                          <input
-                            type="number"
-                            placeholder="auto"
-                            value={axisRanges[key]?.max ?? ''}
-                            onChange={(event) => handleAxisRangeChange(key, 'max', event.target.value)}
-                          />
-                        </label>
+              <div className="axis-display-section">
+                <div className="axis-display-header">
+                  <div>
+                    <p className="axis-display-eyebrow">表示 / 軸</p>
+                    <h3 className="axis-display-title">マテリアル軸コントロール</h3>
+                  </div>
+                  <p className="axis-display-caption">
+                    グラフの表現をマテリアル調のトーンで整え、軸レンジと表示ルールを一気に微調整できます。
+                  </p>
+                </div>
+                <div className="axis-display-toolbar">
+                  <button
+                    type="button"
+                    className={`material-toggle${showTooltip ? ' on' : ''}`}
+                    onClick={() => setShowTooltip((s) => !s)}
+                  >
+                    <span>ツールチップ</span>
+                    <strong>{showTooltip ? 'ON' : 'OFF'}</strong>
+                  </button>
+                  <button type="button" className="material-outline" onClick={resetAxisRanges}>
+                    軸レンジリセット
+                  </button>
+                </div>
+                <div className="axis-range-panel material-card">
+                  <div className="axis-range-grid">
+                    {AXIS_KEYS.map((key) => (
+                      <div key={key} className="axis-range-card">
+                        <p className="axis-range-title">{AXIS_CONFIG[key].label}</p>
+                        <div className="axis-range-inputs">
+                          <label>
+                            <span>最小値</span>
+                            <input
+                              type="number"
+                              placeholder="auto"
+                              value={axisRanges[key]?.min ?? ''}
+                              onChange={(event) => handleAxisRangeChange(key, 'min', event.target.value)}
+                            />
+                          </label>
+                          <label>
+                            <span>最大値</span>
+                            <input
+                              type="number"
+                              placeholder="auto"
+                              value={axisRanges[key]?.max ?? ''}
+                              onChange={(event) => handleAxisRangeChange(key, 'max', event.target.value)}
+                            />
+                          </label>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
