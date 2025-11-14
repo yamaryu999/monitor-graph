@@ -1,4 +1,4 @@
-import { ChangeEvent, MouseEvent, useCallback, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import Encoding from 'encoding-japanese';
 import { Line } from 'react-chartjs-2';
@@ -204,6 +204,125 @@ const createAxisRangeState = (): AxisRangeState =>
     acc[key] = { min: '', max: '' };
     return acc;
   }, {} as AxisRangeState);
+
+const createAxisAutoState = (): Record<AxisKey, boolean> =>
+  AXIS_KEYS.reduce((acc, key) => {
+    acc[key] = true;
+    return acc;
+  }, {} as Record<AxisKey, boolean>);
+
+type PresetPayload = {
+  seriesVisibility: Record<string, boolean>;
+  seriesAxis: Record<string, AxisKey>;
+  axisRanges: AxisRangeState;
+  axisAuto: Record<AxisKey, boolean>;
+  showTooltip: boolean;
+  sortMode: 'name' | 'latest' | 'variability';
+};
+
+type DisplayPreset = {
+  id: string;
+  name: string;
+  savedAt: string;
+  payload: PresetPayload;
+};
+
+const PRESET_STORAGE_KEY = 'monitor-graph:display-presets';
+
+const cloneAxisRangeState = (source: AxisRangeState): AxisRangeState =>
+  AXIS_KEYS.reduce((acc, key) => {
+    acc[key] = { ...source[key] };
+    return acc;
+  }, {} as AxisRangeState);
+
+const cloneAxisAutoState = (source: Record<AxisKey, boolean>): Record<AxisKey, boolean> =>
+  AXIS_KEYS.reduce((acc, key) => {
+    acc[key] = source[key] ?? true;
+    return acc;
+  }, {} as Record<AxisKey, boolean>);
+
+const coerceAxisRangeState = (input?: Partial<Record<AxisKey, Partial<{ min: string; max: string }>>>): AxisRangeState => {
+  const base = createAxisRangeState();
+  AXIS_KEYS.forEach((key) => {
+    base[key] = {
+      min: input?.[key]?.min ?? '',
+      max: input?.[key]?.max ?? ''
+    };
+  });
+  return base;
+};
+
+const coerceAxisAutoState = (input?: Partial<Record<AxisKey, boolean>>): Record<AxisKey, boolean> => {
+  const base = createAxisAutoState();
+  AXIS_KEYS.forEach((key) => {
+    if (typeof input?.[key] === 'boolean') {
+      base[key] = input[key] as boolean;
+    }
+  });
+  return base;
+};
+
+const generatePresetId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `preset-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const normalizePreset = (raw: unknown): DisplayPreset | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const entry = raw as Partial<DisplayPreset> & { payload?: Partial<PresetPayload> };
+  const payload = (entry.payload ?? {}) as Partial<PresetPayload>;
+  const sv: Record<string, boolean> = {};
+  if (payload.seriesVisibility && typeof payload.seriesVisibility === 'object') {
+    Object.entries(payload.seriesVisibility).forEach(([key, value]) => {
+      sv[key] = typeof value === 'boolean' ? value : Boolean(value);
+    });
+  }
+  const axis: Record<string, AxisKey> = {};
+  if (payload.seriesAxis && typeof payload.seriesAxis === 'object') {
+    Object.entries(payload.seriesAxis).forEach(([key, value]) => {
+      axis[key] = AXIS_KEYS.includes(value as AxisKey) ? (value as AxisKey) : 'y1';
+    });
+  }
+  const sortMode: PresetPayload['sortMode'] =
+    payload.sortMode === 'latest' || payload.sortMode === 'variability' ? payload.sortMode : 'name';
+  return {
+    id: typeof entry.id === 'string' ? entry.id : generatePresetId(),
+    name: typeof entry.name === 'string' ? entry.name : 'プリセット',
+    savedAt: typeof entry.savedAt === 'string' ? entry.savedAt : new Date().toISOString(),
+    payload: {
+      seriesVisibility: sv,
+      seriesAxis: axis,
+      axisRanges: payload.axisRanges ? coerceAxisRangeState(payload.axisRanges) : createAxisRangeState(),
+      axisAuto: payload.axisAuto ? coerceAxisAutoState(payload.axisAuto) : createAxisAutoState(),
+      showTooltip: typeof payload.showTooltip === 'boolean' ? payload.showTooltip : true,
+      sortMode
+    }
+  };
+};
+
+const loadStoredPresets = (): DisplayPreset[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(PRESET_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => normalizePreset(item)).filter(Boolean) as DisplayPreset[];
+  } catch {
+    return [];
+  }
+};
+
+const persistPresets = (items: DisplayPreset[]) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // noop
+  }
+};
 
 type TimeParts = {
   hour: number;
@@ -578,9 +697,13 @@ function App() {
   const [seriesVisibility, setSeriesVisibility] = useState<Record<string, boolean>>({});
   const [seriesAxis, setSeriesAxis] = useState<Record<string, AxisKey>>({});
   const [axisRanges, setAxisRanges] = useState<AxisRangeState>(() => createAxisRangeState());
+  const [axisAuto, setAxisAuto] = useState<Record<AxisKey, boolean>>(() => createAxisAutoState());
   const [controlsOpen, setControlsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
   const [bulkAxis, setBulkAxis] = useState<AxisKey>('y1');
+  const [presets, setPresets] = useState<DisplayPreset[]>(() => loadStoredPresets());
+  const [presetName, setPresetName] = useState('');
+  const [selectedPresetId, setSelectedPresetId] = useState('');
   const [showTooltip, setShowTooltip] = useState(true);
   const [loadedFiles, setLoadedFiles] = useState<{ fileName: string; label: string }[]>([]);
   const [fileName, setFileName] = useState('');
@@ -590,12 +713,23 @@ function App() {
   const appVersion = (pkg as { version?: string }).version ?? '0.0.0';
   const chartRef = useRef<ChartJS<'line'> | null>(null);
   const fullRef = useRef<ChartJS<'line'> | null>(null);
+  const presetFileInputRef = useRef<HTMLInputElement | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [sortMode, setSortMode] = useState<'name' | 'latest' | 'variability'>('name');
   const [selected, setSelected] = useState<string[]>([]);
   const lastClickedIndex = useRef<number | null>(null);
   const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>({});
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    persistPresets(presets);
+  }, [presets]);
+
+  useEffect(() => {
+    if (selectedPresetId && !presets.some((preset) => preset.id === selectedPresetId)) {
+      setSelectedPresetId('');
+    }
+  }, [presets, selectedPresetId]);
 
   const chartData = useChartData(parsedData, seriesVisibility, seriesAxis);
 
@@ -609,10 +743,12 @@ function App() {
     };
 
     const axisBounds = AXIS_KEYS.reduce((acc, key) => {
-      acc[key] = {
-        min: toNumber(axisRanges[key]?.min),
-        max: toNumber(axisRanges[key]?.max)
-      };
+      acc[key] = axisAuto[key]
+        ? { min: undefined, max: undefined }
+        : {
+            min: toNumber(axisRanges[key]?.min),
+            max: toNumber(axisRanges[key]?.max)
+          };
       return acc;
     }, {} as Record<AxisKey, { min?: number; max?: number }>);
 
@@ -741,18 +877,20 @@ function App() {
       }
     }
   };
-  }, [axisRanges, seriesVisibility, showTooltip]);
+  }, [axisAuto, axisRanges, seriesVisibility, showTooltip]);
 
   const resetState = () => {
     setParsedData(null);
     setSeriesVisibility({});
     setSeriesAxis({});
     setAxisRanges(createAxisRangeState());
+    setAxisAuto(createAxisAutoState());
     setFileName('');
   };
 
   const resetAxisRanges = () => {
     setAxisRanges(createAxisRangeState());
+    setAxisAuto(createAxisAutoState());
   };
 
   const initializeSeriesState = (series: Record<string, (number | null)[]>) => {
@@ -827,6 +965,7 @@ function App() {
   };
 
   const handleAxisRangeChange = (axisKey: AxisKey, field: 'min' | 'max', value: string) => {
+    setAxisAuto((current) => ({ ...current, [axisKey]: false }));
     setAxisRanges((current) => ({
       ...current,
       [axisKey]: {
@@ -834,6 +973,144 @@ function App() {
         [field]: value
       }
     }));
+  };
+
+  const handleAxisModeChange = (axisKey: AxisKey, autoMode: boolean) => {
+    setAxisAuto((current) => ({ ...current, [axisKey]: autoMode }));
+    if (autoMode) {
+      setAxisRanges((current) => ({
+        ...current,
+        [axisKey]: { min: '', max: '' }
+      }));
+    }
+  };
+
+  const handleFitAxis = (axisKey: AxisKey) => {
+    if (!parsedData) return;
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    Object.entries(parsedData.series).forEach(([name, values]) => {
+      if ((seriesAxis[name] ?? 'y1') !== axisKey) return;
+      if (seriesVisibility[name] === false) return;
+      values.forEach((value) => {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+          if (value < min) min = value;
+          if (value > max) max = value;
+        }
+      });
+    });
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return;
+    }
+    if (min === max) {
+      const padding = Math.abs(min || 1) * 0.05 || 1;
+      min -= padding;
+      max += padding;
+    }
+    const margin = (max - min) * 0.05;
+    const nextMin = min - margin;
+    const nextMax = max + margin;
+    setAxisRanges((current) => ({
+      ...current,
+      [axisKey]: {
+        min: Number(nextMin.toPrecision(8)).toString(),
+        max: Number(nextMax.toPrecision(8)).toString()
+      }
+    }));
+    setAxisAuto((current) => ({ ...current, [axisKey]: false }));
+  };
+
+  const buildPresetPayload = (): PresetPayload => ({
+    seriesVisibility: { ...seriesVisibility },
+    seriesAxis: { ...seriesAxis },
+    axisRanges: cloneAxisRangeState(axisRanges),
+    axisAuto: cloneAxisAutoState(axisAuto),
+    showTooltip,
+    sortMode
+  });
+
+  const applyPreset = (preset: DisplayPreset) => {
+    setSeriesVisibility({ ...preset.payload.seriesVisibility });
+    setSeriesAxis({ ...preset.payload.seriesAxis });
+    setAxisRanges(cloneAxisRangeState(preset.payload.axisRanges ?? createAxisRangeState()));
+    setAxisAuto(cloneAxisAutoState(preset.payload.axisAuto ?? createAxisAutoState()));
+    setShowTooltip(preset.payload.showTooltip);
+    setSortMode(preset.payload.sortMode);
+  };
+
+  const handleSavePreset = () => {
+    const name = presetName.trim();
+    if (!name) return;
+    const payload = buildPresetPayload();
+    const savedAt = new Date().toISOString();
+    let nextSelectedId = '';
+    setPresets((current) => {
+      const existing = current.find((p) => p.name === name);
+      if (existing) {
+        nextSelectedId = existing.id;
+        return current.map((p) => (p.id === existing.id ? { ...existing, payload, savedAt } : p));
+      }
+      const newPreset: DisplayPreset = { id: generatePresetId(), name, savedAt, payload };
+      nextSelectedId = newPreset.id;
+      return [...current, newPreset];
+    });
+    setPresetName('');
+    if (nextSelectedId) {
+      setSelectedPresetId(nextSelectedId);
+    }
+  };
+
+  const handleLoadPreset = (presetId: string) => {
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) return;
+    applyPreset(preset);
+    setSelectedPresetId(presetId);
+  };
+
+  const handleDeletePreset = (presetId: string) => {
+    if (!presetId) return;
+    setPresets((current) => current.filter((p) => p.id !== presetId));
+    if (selectedPresetId === presetId) {
+      setSelectedPresetId('');
+    }
+  };
+
+  const handleExportPresets = () => {
+    if (!presets.length || typeof window === 'undefined') return;
+    try {
+      const blob = new Blob([JSON.stringify(presets, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'monitor-graph-presets.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // noop
+    }
+  };
+
+  const handleImportPresets = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) return;
+      const normalized = parsed.map((entry) => normalizePreset(entry)).filter(Boolean) as DisplayPreset[];
+      if (!normalized.length) return;
+      setPresets((current) => {
+        const map = new Map(current.map((p) => [p.id, p]));
+        normalized.forEach((preset) => {
+          map.set(preset.id, preset);
+        });
+        return Array.from(map.values());
+      });
+    } catch {
+      // noop
+    } finally {
+      event.target.value = '';
+    }
   };
 
   const handleResetZoom = useCallback(() => {
@@ -1099,156 +1376,317 @@ function App() {
               </div>
             </div>
             <div className="side-body">
-              <div className="filter-row">
-                <input
-                  className="filter-input"
-                  placeholder="列名でフィルター"
-                  value={filterText}
-                  onChange={(e) => setFilterText(e.target.value)}
-                />
-                <select className="sort-select" value={sortMode} onChange={(e) => setSortMode(e.target.value as any)}>
-                  <option value="name">名前順</option>
-                  <option value="latest">最近値</option>
-                  <option value="variability">変動量</option>
-                </select>
-              </div>
-              <div className="global-visibility-row">
-                <button type="button" className="btn" onClick={selectAll}>全て表示</button>
-                <button type="button" className="btn" onClick={clearAll}>全て非表示</button>
-              </div>
-              {selected.length > 0 && (
-                <div className="selection-toolbar">
-                  <span>{selected.length} 件選択中</span>
-                  <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, true)}>表示</button>
-                  <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, false)}>非表示</button>
-                  <div className="axis-chips">
-                    {AXIS_KEYS.map((k) => (
-                      <button key={k} type="button" className={'chip ' + k} onClick={() => applyAxisToNames(selected, k)}>{AXIS_CONFIG[k].label}</button>
-                    ))}
-                  </div>
-                  <button className="btn" type="button" onClick={clearSelection}>選択解除</button>
+              <section className="panel-section">
+                <div className="section-header">
+                  <p className="section-eyebrow">検索 / 絞り込み</p>
+                  <h3>シリーズを整理</h3>
+                  <p className="section-caption">名前や指標で素早く探し、一括表示を切り替えます。</p>
                 </div>
+                <div className="filter-grid">
+                  <input
+                    className="filter-input"
+                    placeholder="列名でフィルター"
+                    value={filterText}
+                    onChange={(e) => setFilterText(e.target.value)}
+                  />
+                  <select className="sort-select" value={sortMode} onChange={(e) => setSortMode(e.target.value as any)}>
+                    <option value="name">名前順</option>
+                    <option value="latest">最近値</option>
+                    <option value="variability">変動量</option>
+                  </select>
+                </div>
+                <div className="visibility-toolbar">
+                  <button type="button" className="btn" onClick={selectAll}>全て表示</button>
+                  <button type="button" className="btn" onClick={clearAll}>全て非表示</button>
+                </div>
+              </section>
+
+              {selected.length > 0 && (
+                <section className="panel-section selection-section">
+                  <div className="section-header">
+                    <p className="section-eyebrow">選択操作</p>
+                    <h3>{selected.length} 件選択中</h3>
+                    <p className="section-caption">表示状態や軸割り当てをまとめて変更できます。</p>
+                  </div>
+                  <div className="selection-toolbar">
+                    <div className="selection-buttons">
+                      <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, true)}>表示</button>
+                      <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, false)}>非表示</button>
+                      <button className="btn ghost" type="button" onClick={clearSelection}>選択解除</button>
+                    </div>
+                    <div className="axis-segment-group ghost" role="group" aria-label="選択中の軸を変更">
+                      {AXIS_KEYS.map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          className={`axis-segment ${k}${bulkAxis === k ? ' active' : ''}`}
+                          aria-pressed={bulkAxis === k}
+                          onClick={() => {
+                            setBulkAxis(k);
+                            applyAxisToNames(selected, k);
+                          }}
+                        >
+                          {k.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </section>
               )}
 
-              {/* Grouped list */}
-              <div className="grouped-list">
-                {Array.from(grouped.entries()).map(([file, gm]) => (
-                  <div key={file} className="file-group-card">
-                    <div className="file-group-header" onClick={() => setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) }))}>
-                      <span className="file-name-strong">{file}</span>
-                      <span className="spacer" />
-                      <span className="muted">{Array.from(gm.values()).reduce((a, g) => a + g.items.length, 0)} 件</span>
-                      <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) })); }}>
-                        {(collapsedFiles[file] ?? true) ? '展開' : '折りたたみ'}
+              <section className="panel-section">
+                <div className="section-header">
+                  <p className="section-eyebrow">グループ</p>
+                  <h3>系列ごとの操作</h3>
+                  <p className="section-caption">ファイル → グループ → シリーズの階層で整理しています。</p>
+                </div>
+                <div className="grouped-list">
+                  {Array.from(grouped.entries()).map(([file, gm]) => (
+                    <div key={file} className="file-group-card">
+                      <div className="file-group-header" onClick={() => setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) }))}>
+                        <span className="file-name-strong">{file}</span>
+                        <span className="spacer" />
+                        <span className="muted">{Array.from(gm.values()).reduce((a, g) => a + g.items.length, 0)} 件</span>
+                        <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) })); }}>
+                          {(collapsedFiles[file] ?? true) ? '展開' : '折りたたみ'}
+                        </button>
+                      </div>
+                      {!(collapsedFiles[file] ?? true) && (
+                        <div className="group-list">
+                          {Array.from(gm.entries()).map(([gid, group]) => (
+                            <div key={gid} className="group-card">
+                              <div className="group-header" onClick={() => setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) }))}>
+                                <strong>{group.groupLabel}</strong>
+                                {group.unit && <span className="unit-badge">[{group.unit}]</span>}
+                                <span className="spacer" />
+                                <div className="group-actions" onClick={(e) => e.stopPropagation()}>
+                                  <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), true)}>表示</button>
+                                  <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), false)}>非表示</button>
+                                  <div className="axis-segment-group compact" role="group" aria-label={`${group.groupLabel} の軸切替`}>
+                                    {AXIS_KEYS.map((k) => (
+                                      <button
+                                        key={k}
+                                        type="button"
+                                        className={`axis-segment ${k}`}
+                                        onClick={() => applyAxisToNames(group.items.map(i => i.name), k)}
+                                      >
+                                        {k.toUpperCase()}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) })); }}>
+                                  {(collapsedGroups[`${file}::${gid}`] ?? true) ? '展開' : '折りたたみ'}
+                                </button>
+                              </div>
+                              {!(collapsedGroups[`${file}::${gid}`] ?? true) && (
+                                <div className="series-list">
+                                  {group.items.map((d, idx) => {
+                                    const indexInFlat = sortedDescriptors.findIndex((x) => x.name === d.name);
+                                    const isSelected = selected.includes(d.name);
+                                    return (
+                                      <div key={d.name} className={'series-item' + (isSelected ? ' selected' : '')} onClick={(e) => toggleSelect(d.name, indexInFlat, e as any)}>
+                                        <label className="series-toggle" onClick={(e) => e.stopPropagation()}>
+                                          <input
+                                            type="checkbox"
+                                            checked={seriesVisibility[d.name] ?? true}
+                                            onChange={() => toggleSeries(d.name)}
+                                          />
+                                          <span>{d.name}</span>
+                                        </label>
+                                        <div className="axis-segment-group" role="group" aria-label={`${d.name} の軸選択`} onClick={(e) => e.stopPropagation()}>
+                                          {AXIS_KEYS.map((k) => {
+                                            const isActive = (seriesAxis[d.name] ?? 'y1') === k;
+                                            return (
+                                              <button
+                                                key={k}
+                                                type="button"
+                                                className={`axis-segment ${k}${isActive ? ' active' : ''}`}
+                                                aria-pressed={isActive}
+                                                onClick={() => handleAxisChange(d.name, k)}
+                                              >
+                                                {k.toUpperCase()}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="panel-section axis-panel">
+                <div className="section-header">
+                  <p className="section-eyebrow">表示 / 軸</p>
+                  <h3>マテリアル軸コントロール</h3>
+                  <p className="section-caption">グラフのトーンやプリセット、軸レンジをまとめて管理できます。</p>
+                </div>
+                <div className="axis-display-section">
+                  <div className="axis-display-toolbar">
+                    <button
+                      type="button"
+                      className={`material-toggle${showTooltip ? ' on' : ''}`}
+                      onClick={() => setShowTooltip((s) => !s)}
+                    >
+                      <span>ツールチップ</span>
+                      <strong>{showTooltip ? 'ON' : 'OFF'}</strong>
+                    </button>
+                    <button type="button" className="material-outline" onClick={resetAxisRanges}>
+                      軸レンジリセット
+                    </button>
+                  </div>
+                  <div className="preset-panel">
+                    <div className="preset-save-row">
+                      <input
+                        className="preset-input"
+                        placeholder="プリセット名を入力"
+                        value={presetName}
+                        onChange={(event) => setPresetName(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        className="material-outline"
+                        onClick={handleSavePreset}
+                        disabled={!presetName.trim()}
+                      >
+                        保存
                       </button>
                     </div>
-                    {!(collapsedFiles[file] ?? true) && (
-                      <div className="group-list">
-                        {Array.from(gm.entries()).map(([gid, group]) => (
-                          <div key={gid} className="group-card">
-                            <div className="group-header" onClick={() => setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) }))}>
-                              <strong>{group.groupLabel}</strong>
-                              {group.unit && <span className="unit-badge">[{group.unit}]</span>}
-                              <span className="spacer" />
-                              <div className="group-actions" onClick={(e) => e.stopPropagation()}>
-                                <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), true)}>表示</button>
-                                <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), false)}>非表示</button>
-                                <div className="axis-chips">
-                                  {AXIS_KEYS.map((k) => (
-                                    <button key={k} type="button" className={'chip small ' + k} onClick={() => applyAxisToNames(group.items.map(i => i.name), k)}>{k.toUpperCase()}</button>
-                                  ))}
-                                </div>
-                              </div>
-                              <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) })); }}>
-                                {(collapsedGroups[`${file}::${gid}`] ?? true) ? '展開' : '折りたたみ'}
-                              </button>
-                            </div>
-                            {!(collapsedGroups[`${file}::${gid}`] ?? true) && (
-                              <div className="series-list">
-                                {group.items.map((d, idx) => {
-                                  const indexInFlat = sortedDescriptors.findIndex((x) => x.name === d.name);
-                                  const isSelected = selected.includes(d.name);
-                                  return (
-                                    <div key={d.name} className={'series-item' + (isSelected ? ' selected' : '')} onClick={(e) => toggleSelect(d.name, indexInFlat, e as any)}>
-                                      <label className="series-toggle" onClick={(e) => e.stopPropagation()}>
-                                        <input
-                                          type="checkbox"
-                                          checked={seriesVisibility[d.name] ?? true}
-                                          onChange={() => toggleSeries(d.name)}
-                                        />
-                                        <span>{d.name}</span>
-                                      </label>
-                                      <div className="axis-chips" onClick={(e) => e.stopPropagation()}>
-                                        {AXIS_KEYS.map((k) => (
-                                          <button key={k} type="button" className={'chip ' + (seriesAxis[d.name] === k ? 'active ' : '') + k} onClick={() => handleAxisChange(d.name, k)}>{k.toUpperCase()}</button>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                    <div className="preset-load-row">
+                      <select
+                        className="preset-select"
+                        value={selectedPresetId}
+                        onChange={(event) => setSelectedPresetId(event.target.value)}
+                      >
+                        <option value="">プリセットを選択</option>
+                        {presets.map((preset) => {
+                          const saved = dayjs(preset.savedAt);
+                          const stamp = saved.isValid() ? saved.format('MM/DD HH:mm') : preset.savedAt;
+                          return (
+                            <option key={preset.id} value={preset.id}>
+                              {preset.name}（{stamp}）
+                            </option>
+                          );
+                        })}
+                      </select>
+                      <button
+                        type="button"
+                        className="material-outline tiny"
+                        onClick={() => handleLoadPreset(selectedPresetId)}
+                        disabled={!selectedPresetId}
+                      >
+                        読込
+                      </button>
+                      <button
+                        type="button"
+                        className="material-outline tiny"
+                        onClick={() => handleDeletePreset(selectedPresetId)}
+                        disabled={!selectedPresetId}
+                      >
+                        削除
+                      </button>
+                      <button
+                        type="button"
+                        className="material-outline tiny"
+                        onClick={handleExportPresets}
+                        disabled={!presets.length}
+                      >
+                        JSON書出
+                      </button>
+                      <button
+                        type="button"
+                        className="material-outline tiny"
+                        onClick={() => presetFileInputRef.current?.click()}
+                      >
+                        JSON読込
+                      </button>
+                      <input
+                        ref={presetFileInputRef}
+                        type="file"
+                        accept="application/json"
+                        style={{ display: 'none' }}
+                        onChange={handleImportPresets}
+                      />
+                    </div>
+                    {!presets.length && (
+                      <p className="preset-hint">まだプリセットはありません。設定を保存するとここに一覧表示されます。</p>
                     )}
                   </div>
-                ))}
-              </div>
-
-              <div className="axis-display-section">
-                <div className="axis-display-header">
-                  <div>
-                    <p className="axis-display-eyebrow">表示 / 軸</p>
-                    <h3 className="axis-display-title">マテリアル軸コントロール</h3>
-                  </div>
-                  <p className="axis-display-caption">
-                    グラフの表現をマテリアル調のトーンで整え、軸レンジと表示ルールを一気に微調整できます。
-                  </p>
-                </div>
-                <div className="axis-display-toolbar">
-                  <button
-                    type="button"
-                    className={`material-toggle${showTooltip ? ' on' : ''}`}
-                    onClick={() => setShowTooltip((s) => !s)}
-                  >
-                    <span>ツールチップ</span>
-                    <strong>{showTooltip ? 'ON' : 'OFF'}</strong>
-                  </button>
-                  <button type="button" className="material-outline" onClick={resetAxisRanges}>
-                    軸レンジリセット
-                  </button>
-                </div>
-                <div className="axis-range-panel material-card">
-                  <div className="axis-range-grid">
-                    {AXIS_KEYS.map((key) => (
-                      <div key={key} className="axis-range-card">
-                        <p className="axis-range-title">{AXIS_CONFIG[key].label}</p>
-                        <div className="axis-range-inputs">
-                          <label>
-                            <span>最小値</span>
-                            <input
-                              type="number"
-                              placeholder="auto"
-                              value={axisRanges[key]?.min ?? ''}
-                              onChange={(event) => handleAxisRangeChange(key, 'min', event.target.value)}
-                            />
-                          </label>
-                          <label>
-                            <span>最大値</span>
-                            <input
-                              type="number"
-                              placeholder="auto"
-                              value={axisRanges[key]?.max ?? ''}
-                              onChange={(event) => handleAxisRangeChange(key, 'max', event.target.value)}
-                            />
-                          </label>
+                  <div className="axis-range-panel material-card">
+                    <div className="axis-range-grid">
+                      {AXIS_KEYS.map((key) => (
+                        <div key={key} className="axis-range-card">
+                          <div className="axis-range-head">
+                            <p className="axis-range-title">{AXIS_CONFIG[key].label}</p>
+                            <div className="axis-mode-toggle" role="group" aria-label={`${AXIS_CONFIG[key].label} モード切替`}>
+                              <button
+                                type="button"
+                                className={'mode-chip' + (axisAuto[key] ? ' active' : '')}
+                                aria-pressed={axisAuto[key]}
+                                onClick={() => handleAxisModeChange(key, true)}
+                              >
+                                AUTO
+                              </button>
+                              <button
+                                type="button"
+                                className={'mode-chip' + (!axisAuto[key] ? ' active' : '')}
+                                aria-pressed={!axisAuto[key]}
+                                onClick={() => handleAxisModeChange(key, false)}
+                              >
+                                固定
+                              </button>
+                            </div>
+                          </div>
+                          <div className="axis-mode-actions">
+                            <span className="axis-mode-caption">
+                              {axisAuto[key] ? 'データに合わせて自動調整します' : '入力値でレンジを固定します'}
+                            </span>
+                            <button
+                              type="button"
+                              className="material-outline tiny"
+                              onClick={() => handleFitAxis(key)}
+                              disabled={!parsedData}
+                            >
+                              FIT
+                            </button>
+                          </div>
+                          <div className="axis-range-inputs">
+                            <label>
+                              <span>最小値</span>
+                              <input
+                                type="number"
+                                placeholder="auto"
+                                value={axisRanges[key]?.min ?? ''}
+                                disabled={axisAuto[key]}
+                                onChange={(event) => handleAxisRangeChange(key, 'min', event.target.value)}
+                              />
+                            </label>
+                            <label>
+                              <span>最大値</span>
+                              <input
+                                type="number"
+                                placeholder="auto"
+                                value={axisRanges[key]?.max ?? ''}
+                                disabled={axisAuto[key]}
+                                onChange={(event) => handleAxisRangeChange(key, 'max', event.target.value)}
+                              />
+                            </label>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
+              </section>
             </div>
           </aside>
         </>
