@@ -120,6 +120,68 @@ const cursorOffsetPositioner: TooltipPositionerFunction<'line'> = function curso
 
 Tooltip.positioners.cursorOffset = cursorOffsetPositioner;
 
+type IconName = 'eye' | 'eye-off' | 'collapse' | 'expand' | 'bolt' | 'close';
+
+const Icon = ({ name }: { name: IconName }) => {
+  switch (name) {
+    case 'eye':
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <path
+            d="M2 12c2.5-5 6.5-8 10-8s7.5 3 10 8c-2.5 5-6.5 8-10 8S4.5 17 2 12z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      );
+    case 'eye-off':
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <path
+            d="M2 12c2.5-5 6.5-8 10-8 1.38 0 2.74.32 4 .94M21.95 12.5C20 17 15.5 20 12 20c-1.38 0-2.74-.32-4-.94"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+          <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
+    case 'collapse':
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <path d="M6 10l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case 'expand':
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <path d="M6 14l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case 'bolt':
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <path d="M13 3L5 14h5l-1 7 8-11h-5l1-7z" fill="currentColor" />
+        </svg>
+      );
+    case 'close':
+      return (
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          <line x1="6" y1="18" x2="18" y2="6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+};
+
 const annotateDatasetLabels = (datasets: ParsedDataset[]): ParsedDataset[] => {
   const counts = new Map<string, number>();
   return datasets.map((d, i) => {
@@ -486,6 +548,7 @@ function App() {
   const [rowStride, setRowStride] = useState(1);
   const [timeFilterStart, setTimeFilterStart] = useState('');
   const [timeFilterEnd, setTimeFilterEnd] = useState('');
+  const [panelTab, setPanelTab] = useState<'basic' | 'advanced'>('basic');
   const parserWorkerRef = useRef<Worker | null>(null);
   const pendingParses = useRef(
     new Map<string, { resolve: (value: ParsedDataset[]) => void; reject: (error: Error) => void }>()
@@ -1256,326 +1319,398 @@ function App() {
           <div className={"backdrop" + (controlsOpen ? ' show' : '')} onClick={() => setControlsOpen(false)} />
           <aside className={"side-panel" + (controlsOpen ? ' open' : '')} aria-label="データ/軸設定パネル">
             <div className="side-header">
-              <strong>データ/軸設定</strong>
+              <div>
+                <strong>データ / 軸設定</strong>
+                <p className="side-header-sub">よく使う操作と詳細設定を切り替えて利用できます。</p>
+              </div>
               <div className="side-header-actions">
-                <button type="button" className="btn" onClick={() => setCollapsedAll(true)}>全て折りたたむ</button>
-                <button type="button" className="btn" onClick={() => setCollapsedAll(false)}>全て展開</button>
-                <button type="button" className="btn" onClick={autoAssignByUnit}>単位で自動割当</button>
-                <button type="button" className="btn" onClick={() => setControlsOpen(false)}>閉じる</button>
+                <button type="button" className="icon-btn ghost" onClick={autoAssignByUnit} aria-label="単位で自動割当">
+                  <Icon name="bolt" />
+                  <span>自動割当</span>
+                </button>
+                <button type="button" className="icon-btn ghost" onClick={() => setControlsOpen(false)} aria-label="パネルを閉じる">
+                  <Icon name="close" />
+                  <span>閉じる</span>
+                </button>
               </div>
             </div>
+            <div className="panel-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={panelTab === 'basic'}
+                className={'panel-tab' + (panelTab === 'basic' ? ' active' : '')}
+                onClick={() => setPanelTab('basic')}
+              >
+                基本操作
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={panelTab === 'advanced'}
+                className={'panel-tab' + (panelTab === 'advanced' ? ' active' : '')}
+                onClick={() => setPanelTab('advanced')}
+              >
+                詳細設定
+              </button>
+            </div>
             <div className="side-body">
-              <section className="panel-section">
-                <div className="section-header">
-                  <p className="section-eyebrow">検索 / 絞り込み</p>
-                  <h3>シリーズを整理</h3>
-                  <p className="section-caption">名前や指標で素早く探し、一括表示を切り替えます。</p>
-                </div>
-                <div className="filter-grid">
-                  <input
-                    className="filter-input"
-                    placeholder="列名でフィルター"
-                    value={filterText}
-                    onChange={(e) => setFilterText(e.target.value)}
-                  />
-                  <select className="sort-select" value={sortMode} onChange={(e) => setSortMode(e.target.value as any)}>
-                    <option value="name">名前順</option>
-                    <option value="latest">最近値</option>
-                    <option value="variability">変動量</option>
-                  </select>
-                </div>
-                <div className="visibility-toolbar">
-                  <button type="button" className="btn" onClick={selectAll}>全て表示</button>
-                  <button type="button" className="btn" onClick={clearAll}>全て非表示</button>
-                </div>
-              </section>
-
-              {selected.length > 0 && (
-                <section className="panel-section selection-section">
-                  <div className="section-header">
-                    <p className="section-eyebrow">選択操作</p>
-                    <h3>{selected.length} 件選択中</h3>
-                    <p className="section-caption">表示状態や軸割り当てをまとめて変更できます。</p>
-                  </div>
-                  <div className="selection-toolbar">
-                    <div className="selection-buttons">
-                      <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, true)}>表示</button>
-                      <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, false)}>非表示</button>
-                      <button className="btn ghost" type="button" onClick={clearSelection}>選択解除</button>
+              {panelTab === 'basic' ? (
+                <>
+                  <section className="panel-section">
+                    <div className="section-header">
+                      <p className="section-eyebrow">検索 / 絞り込み</p>
+                      <h3>シリーズを整理</h3>
+                      <p className="section-caption">名前や指標で素早く探し、一括表示を切り替えます。</p>
                     </div>
-                    <div className="axis-segment-group ghost" role="group" aria-label="選択中の軸を変更">
-                      {AXIS_KEYS.map((k) => (
+                    <div className="filter-grid">
+                      <input
+                        className="filter-input"
+                        placeholder="列名でフィルター"
+                        value={filterText}
+                        onChange={(e) => setFilterText(e.target.value)}
+                      />
+                      <select className="sort-select" value={sortMode} onChange={(e) => setSortMode(e.target.value as any)}>
+                        <option value="name">名前順</option>
+                        <option value="latest">最近値</option>
+                        <option value="variability">変動量</option>
+                      </select>
+                    </div>
+                  </section>
+
+                  <div className="quick-action-row" aria-label="クイック操作">
+                    <button type="button" className="icon-btn" onClick={selectAll}>
+                      <Icon name="eye" />
+                      <span>全表示</span>
+                    </button>
+                    <button type="button" className="icon-btn ghost" onClick={clearAll}>
+                      <Icon name="eye-off" />
+                      <span>全非表示</span>
+                    </button>
+                    <button type="button" className="icon-btn ghost" onClick={() => setCollapsedAll(false)}>
+                      <Icon name="expand" />
+                      <span>全展開</span>
+                    </button>
+                    <button type="button" className="icon-btn ghost" onClick={() => setCollapsedAll(true)}>
+                      <Icon name="collapse" />
+                      <span>全折りたたみ</span>
+                    </button>
+                  </div>
+
+                  {selected.length > 0 && (
+                    <section className="panel-section selection-section">
+                      <div className="section-header">
+                        <p className="section-eyebrow">選択操作</p>
+                        <h3>{selected.length} 件選択中</h3>
+                        <p className="section-caption">表示状態や軸割り当てをまとめて変更できます。</p>
+                      </div>
+                      <div className="selection-toolbar">
+                        <div className="selection-buttons">
+                          <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, true)}>表示</button>
+                          <button className="btn" type="button" onClick={() => setVisibilityForNames(selected, false)}>非表示</button>
+                          <button className="btn ghost" type="button" onClick={clearSelection}>選択解除</button>
+                        </div>
+                        <div className="axis-segment-group ghost" role="group" aria-label="選択中の軸を変更">
+                          {AXIS_KEYS.map((k) => (
+                            <button
+                              key={k}
+                              type="button"
+                              className={`axis-segment ${k}${bulkAxis === k ? ' active' : ''}`}
+                              aria-pressed={bulkAxis === k}
+                              onClick={() => {
+                                setBulkAxis(k);
+                                applyAxisToNames(selected, k);
+                              }}
+                            >
+                              {k.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  <section className="panel-section">
+                    <div className="section-header">
+                      <p className="section-eyebrow">グループ</p>
+                      <h3>系列ごとの操作</h3>
+                      <p className="section-caption">ファイル → グループ → シリーズの階層で整理しています。</p>
+                    </div>
+                    <div className="grouped-list">
+                      {Array.from(grouped.entries()).map(([file, gm]) => {
+                        const fileSeries = Array.from(gm.values()).flatMap((group) => group.items.map((i) => i.name));
+                        const fileCollapsed = collapsedFiles[file] ?? true;
+                        const fileCount = fileSeries.length;
+                        return (
+                          <div key={file} className="file-group-card">
+                            <div className="file-group-header" onClick={() => setCollapsedFiles((c) => ({ ...c, [file]: !fileCollapsed }))}>
+                              <span className="file-name-strong">{file}</span>
+                              <span className="spacer" />
+                              <span className="muted">{fileCount} 件</span>
+                              <div className="group-actions" onClick={(e) => e.stopPropagation()}>
+                                <button className="icon-btn ghost mini" type="button" onClick={() => setVisibilityForNames(fileSeries, true)}>
+                                  <Icon name="eye" />
+                                </button>
+                                <button className="icon-btn ghost mini" type="button" onClick={() => setVisibilityForNames(fileSeries, false)}>
+                                  <Icon name="eye-off" />
+                                </button>
+                                <button className="icon-btn ghost mini" type="button" onClick={(event) => { event.stopPropagation(); setCollapsedFiles((c) => ({ ...c, [file]: !fileCollapsed })); }}>
+                                  <Icon name={fileCollapsed ? 'expand' : 'collapse'} />
+                                </button>
+                              </div>
+                            </div>
+                            {!fileCollapsed && (
+                              <div className="group-list">
+                                {Array.from(gm.entries()).map(([gid, group]) => {
+                                  const groupKey = `${file}::${gid}`;
+                                  const groupCollapsed = collapsedGroups[groupKey] ?? true;
+                                  const groupSeries = group.items.map((i) => i.name);
+                                  return (
+                                    <div key={gid} className="group-card">
+                                      <div className="group-header" onClick={() => setCollapsedGroups((c) => ({ ...c, [groupKey]: !groupCollapsed }))}>
+                                        <strong>{group.groupLabel}</strong>
+                                        {group.unit && <span className="unit-badge">[{group.unit}]</span>}
+                                        <span className="spacer" />
+                                        <div className="group-actions" onClick={(e) => e.stopPropagation()}>
+                                          <button className="icon-btn ghost mini" type="button" onClick={() => setVisibilityForNames(groupSeries, true)}>
+                                            <Icon name="eye" />
+                                          </button>
+                                          <button className="icon-btn ghost mini" type="button" onClick={() => setVisibilityForNames(groupSeries, false)}>
+                                            <Icon name="eye-off" />
+                                          </button>
+                                          <div className="axis-segment-group compact ghost" role="group" aria-label={`${group.groupLabel} の軸切替`}>
+                                            {AXIS_KEYS.map((k) => (
+                                              <button
+                                                key={k}
+                                                type="button"
+                                                className={`axis-segment ${k}`}
+                                                onClick={() => applyAxisToNames(groupSeries, k)}
+                                              >
+                                                {k.toUpperCase()}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                        <button className="icon-btn ghost mini" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedGroups((c) => ({ ...c, [groupKey]: !groupCollapsed })); }}>
+                                          <Icon name={groupCollapsed ? 'expand' : 'collapse'} />
+                                        </button>
+                                      </div>
+                                      {!groupCollapsed && (
+                                        <div className="series-list">
+                                          {group.items.map((d) => {
+                                            const indexInFlat = sortedDescriptors.findIndex((x) => x.name === d.name);
+                                            const isSelected = selected.includes(d.name);
+                                            const assignedAxis = seriesAxis[d.name] ?? 'y1';
+                                            return (
+                                              <div key={d.name} className={'series-item' + (isSelected ? ' selected' : '')} onClick={(e) => toggleSelect(d.name, indexInFlat, e as any)}>
+                                                <label className="series-toggle" onClick={(e) => e.stopPropagation()}>
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={seriesVisibility[d.name] ?? true}
+                                                    onChange={() => toggleSeries(d.name)}
+                                                  />
+                                                  <div className="series-label">
+                                                    <span className={`axis-pill ${assignedAxis}`}>{assignedAxis.toUpperCase()}</span>
+                                                    <span>{d.name}</span>
+                                                  </div>
+                                                </label>
+                                                <div className="axis-segment-group" role="group" aria-label={`${d.name} の軸選択`} onClick={(e) => e.stopPropagation()}>
+                                                  {AXIS_KEYS.map((k) => {
+                                                    const isActive = (seriesAxis[d.name] ?? 'y1') === k;
+                                                    return (
+                                                      <button
+                                                        key={k}
+                                                        type="button"
+                                                        className={`axis-segment ${k}${isActive ? ' active' : ''}`}
+                                                        aria-pressed={isActive}
+                                                        onClick={() => handleAxisChange(d.name, k)}
+                                                      >
+                                                        {k.toUpperCase()}
+                                                      </button>
+                                                    );
+                                                  })}
+                                                </div>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </>
+              ) : (
+                <section className="panel-section axis-panel">
+                  <div className="section-header">
+                    <p className="section-eyebrow">表示 / 軸</p>
+                    <h3>マテリアル軸コントロール</h3>
+                    <p className="section-caption">グラフのトーンやプリセット、軸レンジをまとめて管理できます。</p>
+                  </div>
+                  <div className="axis-display-section">
+                    <div className="axis-display-toolbar">
+                      <button
+                        type="button"
+                        className={`material-toggle${showTooltip ? ' on' : ''}`}
+                        onClick={() => setShowTooltip((s) => !s)}
+                      >
+                        <span>ツールチップ</span>
+                        <strong>{showTooltip ? 'ON' : 'OFF'}</strong>
+                      </button>
+                      <button type="button" className="material-outline" onClick={resetAxisRanges}>
+                        軸レンジリセット
+                      </button>
+                    </div>
+                    <div className="preset-panel">
+                      <div className="preset-save-row">
+                        <input
+                          className="preset-input"
+                          placeholder="プリセット名を入力"
+                          value={presetName}
+                          onChange={(event) => setPresetName(event.target.value)}
+                        />
                         <button
-                          key={k}
                           type="button"
-                          className={`axis-segment ${k}${bulkAxis === k ? ' active' : ''}`}
-                          aria-pressed={bulkAxis === k}
-                          onClick={() => {
-                            setBulkAxis(k);
-                            applyAxisToNames(selected, k);
-                          }}
+                          className="material-outline"
+                          onClick={handleSavePreset}
+                          disabled={!presetName.trim()}
                         >
-                          {k.toUpperCase()}
+                          保存
                         </button>
-                      ))}
+                      </div>
+                      <div className="preset-load-row">
+                        <select
+                          className="preset-select"
+                          value={selectedPresetId}
+                          onChange={(event) => setSelectedPresetId(event.target.value)}
+                        >
+                          <option value="">プリセットを選択</option>
+                          {presets.map((preset) => {
+                            const saved = dayjs(preset.savedAt);
+                            const stamp = saved.isValid() ? saved.format('MM/DD HH:mm') : preset.savedAt;
+                            return (
+                              <option key={preset.id} value={preset.id}>
+                                {preset.name}（{stamp}）
+                              </option>
+                            );
+                          })}
+                        </select>
+                        <button
+                          type="button"
+                          className="material-outline tiny"
+                          onClick={() => handleLoadPreset(selectedPresetId)}
+                          disabled={!selectedPresetId}
+                        >
+                          読込
+                        </button>
+                        <button
+                          type="button"
+                          className="material-outline tiny"
+                          onClick={() => handleDeletePreset(selectedPresetId)}
+                          disabled={!selectedPresetId}
+                        >
+                          削除
+                        </button>
+                        <button
+                          type="button"
+                          className="material-outline tiny"
+                          onClick={handleExportPresets}
+                          disabled={!presets.length}
+                        >
+                          JSON書出
+                        </button>
+                        <button
+                          type="button"
+                          className="material-outline tiny"
+                          onClick={() => presetFileInputRef.current?.click()}
+                        >
+                          JSON読込
+                        </button>
+                        <input
+                          ref={presetFileInputRef}
+                          type="file"
+                          accept="application/json"
+                          style={{ display: 'none' }}
+                          onChange={handleImportPresets}
+                        />
+                      </div>
+                      {!presets.length && (
+                        <p className="preset-hint">まだプリセットはありません。設定を保存するとここに一覧表示されます。</p>
+                      )}
+                    </div>
+                    <div className="axis-range-panel material-card">
+                      <div className="axis-range-grid">
+                        {AXIS_KEYS.map((key) => (
+                          <div key={key} className={`axis-range-card axis-theme-${key}`}>
+                            <div className="axis-range-head">
+                              <p className="axis-range-title">{AXIS_CONFIG[key].label}</p>
+                              <div className="axis-mode-toggle" role="group" aria-label={`${AXIS_CONFIG[key].label} モード切替`}>
+                                <button
+                                  type="button"
+                                  className={'mode-chip' + (axisAuto[key] ? ' active' : '')}
+                                  aria-pressed={axisAuto[key]}
+                                  onClick={() => handleAxisModeChange(key, true)}
+                                >
+                                  AUTO
+                                </button>
+                                <button
+                                  type="button"
+                                  className={'mode-chip' + (!axisAuto[key] ? ' active' : '')}
+                                  aria-pressed={!axisAuto[key]}
+                                  onClick={() => handleAxisModeChange(key, false)}
+                                >
+                                  固定
+                                </button>
+                              </div>
+                            </div>
+                            <div className="axis-mode-actions">
+                              <span className="axis-mode-caption">
+                                {axisAuto[key] ? 'データに合わせて自動調整します' : '入力値でレンジを固定します'}
+                              </span>
+                              <button
+                                type="button"
+                                className="material-outline tiny"
+                                onClick={() => handleFitAxis(key)}
+                                disabled={!parsedData}
+                              >
+                                FIT
+                              </button>
+                            </div>
+                            <div className="axis-range-inputs">
+                              <label>
+                                <span>最小値</span>
+                                <input
+                                  type="number"
+                                  placeholder="auto"
+                                  value={axisRanges[key]?.min ?? ''}
+                                  disabled={axisAuto[key]}
+                                  onChange={(event) => handleAxisRangeChange(key, 'min', event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                <span>最大値</span>
+                                <input
+                                  type="number"
+                                  placeholder="auto"
+                                  value={axisRanges[key]?.max ?? ''}
+                                  disabled={axisAuto[key]}
+                                  onChange={(event) => handleAxisRangeChange(key, 'max', event.target.value)}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </section>
               )}
-
-              <section className="panel-section">
-                <div className="section-header">
-                  <p className="section-eyebrow">グループ</p>
-                  <h3>系列ごとの操作</h3>
-                  <p className="section-caption">ファイル → グループ → シリーズの階層で整理しています。</p>
-                </div>
-                <div className="grouped-list">
-                  {Array.from(grouped.entries()).map(([file, gm]) => (
-                    <div key={file} className="file-group-card">
-                      <div className="file-group-header" onClick={() => setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) }))}>
-                        <span className="file-name-strong">{file}</span>
-                        <span className="spacer" />
-                        <span className="muted">{Array.from(gm.values()).reduce((a, g) => a + g.items.length, 0)} 件</span>
-                        <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedFiles((c) => ({ ...c, [file]: !(c[file] ?? true) })); }}>
-                          {(collapsedFiles[file] ?? true) ? '展開' : '折りたたみ'}
-                        </button>
-                      </div>
-                      {!(collapsedFiles[file] ?? true) && (
-                        <div className="group-list">
-                          {Array.from(gm.entries()).map(([gid, group]) => (
-                            <div key={gid} className="group-card">
-                              <div className="group-header" onClick={() => setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) }))}>
-                                <strong>{group.groupLabel}</strong>
-                                {group.unit && <span className="unit-badge">[{group.unit}]</span>}
-                                <span className="spacer" />
-                                <div className="group-actions" onClick={(e) => e.stopPropagation()}>
-                                  <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), true)}>表示</button>
-                                  <button className="btn small" type="button" onClick={() => setVisibilityForNames(group.items.map(i => i.name), false)}>非表示</button>
-                                  <div className="axis-segment-group compact" role="group" aria-label={`${group.groupLabel} の軸切替`}>
-                                    {AXIS_KEYS.map((k) => (
-                                      <button
-                                        key={k}
-                                        type="button"
-                                        className={`axis-segment ${k}`}
-                                        onClick={() => applyAxisToNames(group.items.map(i => i.name), k)}
-                                      >
-                                        {k.toUpperCase()}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                                <button className="btn ghost" type="button" onClick={(e) => { e.stopPropagation(); setCollapsedGroups((c) => ({ ...c, [`${file}::${gid}`]: !(c[`${file}::${gid}`] ?? true) })); }}>
-                                  {(collapsedGroups[`${file}::${gid}`] ?? true) ? '展開' : '折りたたみ'}
-                                </button>
-                              </div>
-                              {!(collapsedGroups[`${file}::${gid}`] ?? true) && (
-                                <div className="series-list">
-                                  {group.items.map((d, idx) => {
-                                    const indexInFlat = sortedDescriptors.findIndex((x) => x.name === d.name);
-                                    const isSelected = selected.includes(d.name);
-                                    return (
-                                      <div key={d.name} className={'series-item' + (isSelected ? ' selected' : '')} onClick={(e) => toggleSelect(d.name, indexInFlat, e as any)}>
-                                        <label className="series-toggle" onClick={(e) => e.stopPropagation()}>
-                                          <input
-                                            type="checkbox"
-                                            checked={seriesVisibility[d.name] ?? true}
-                                            onChange={() => toggleSeries(d.name)}
-                                          />
-                                          <span>{d.name}</span>
-                                        </label>
-                                        <div className="axis-segment-group" role="group" aria-label={`${d.name} の軸選択`} onClick={(e) => e.stopPropagation()}>
-                                          {AXIS_KEYS.map((k) => {
-                                            const isActive = (seriesAxis[d.name] ?? 'y1') === k;
-                                            return (
-                                              <button
-                                                key={k}
-                                                type="button"
-                                                className={`axis-segment ${k}${isActive ? ' active' : ''}`}
-                                                aria-pressed={isActive}
-                                                onClick={() => handleAxisChange(d.name, k)}
-                                              >
-                                                {k.toUpperCase()}
-                                              </button>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="panel-section axis-panel">
-                <div className="section-header">
-                  <p className="section-eyebrow">表示 / 軸</p>
-                  <h3>マテリアル軸コントロール</h3>
-                  <p className="section-caption">グラフのトーンやプリセット、軸レンジをまとめて管理できます。</p>
-                </div>
-                <div className="axis-display-section">
-                  <div className="axis-display-toolbar">
-                    <button
-                      type="button"
-                      className={`material-toggle${showTooltip ? ' on' : ''}`}
-                      onClick={() => setShowTooltip((s) => !s)}
-                    >
-                      <span>ツールチップ</span>
-                      <strong>{showTooltip ? 'ON' : 'OFF'}</strong>
-                    </button>
-                    <button type="button" className="material-outline" onClick={resetAxisRanges}>
-                      軸レンジリセット
-                    </button>
-                  </div>
-                  <div className="preset-panel">
-                    <div className="preset-save-row">
-                      <input
-                        className="preset-input"
-                        placeholder="プリセット名を入力"
-                        value={presetName}
-                        onChange={(event) => setPresetName(event.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="material-outline"
-                        onClick={handleSavePreset}
-                        disabled={!presetName.trim()}
-                      >
-                        保存
-                      </button>
-                    </div>
-                    <div className="preset-load-row">
-                      <select
-                        className="preset-select"
-                        value={selectedPresetId}
-                        onChange={(event) => setSelectedPresetId(event.target.value)}
-                      >
-                        <option value="">プリセットを選択</option>
-                        {presets.map((preset) => {
-                          const saved = dayjs(preset.savedAt);
-                          const stamp = saved.isValid() ? saved.format('MM/DD HH:mm') : preset.savedAt;
-                          return (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.name}（{stamp}）
-                            </option>
-                          );
-                        })}
-                      </select>
-                      <button
-                        type="button"
-                        className="material-outline tiny"
-                        onClick={() => handleLoadPreset(selectedPresetId)}
-                        disabled={!selectedPresetId}
-                      >
-                        読込
-                      </button>
-                      <button
-                        type="button"
-                        className="material-outline tiny"
-                        onClick={() => handleDeletePreset(selectedPresetId)}
-                        disabled={!selectedPresetId}
-                      >
-                        削除
-                      </button>
-                      <button
-                        type="button"
-                        className="material-outline tiny"
-                        onClick={handleExportPresets}
-                        disabled={!presets.length}
-                      >
-                        JSON書出
-                      </button>
-                      <button
-                        type="button"
-                        className="material-outline tiny"
-                        onClick={() => presetFileInputRef.current?.click()}
-                      >
-                        JSON読込
-                      </button>
-                      <input
-                        ref={presetFileInputRef}
-                        type="file"
-                        accept="application/json"
-                        style={{ display: 'none' }}
-                        onChange={handleImportPresets}
-                      />
-                    </div>
-                    {!presets.length && (
-                      <p className="preset-hint">まだプリセットはありません。設定を保存するとここに一覧表示されます。</p>
-                    )}
-                  </div>
-                  <div className="axis-range-panel material-card">
-                    <div className="axis-range-grid">
-                      {AXIS_KEYS.map((key) => (
-                        <div key={key} className="axis-range-card">
-                          <div className="axis-range-head">
-                            <p className="axis-range-title">{AXIS_CONFIG[key].label}</p>
-                            <div className="axis-mode-toggle" role="group" aria-label={`${AXIS_CONFIG[key].label} モード切替`}>
-                              <button
-                                type="button"
-                                className={'mode-chip' + (axisAuto[key] ? ' active' : '')}
-                                aria-pressed={axisAuto[key]}
-                                onClick={() => handleAxisModeChange(key, true)}
-                              >
-                                AUTO
-                              </button>
-                              <button
-                                type="button"
-                                className={'mode-chip' + (!axisAuto[key] ? ' active' : '')}
-                                aria-pressed={!axisAuto[key]}
-                                onClick={() => handleAxisModeChange(key, false)}
-                              >
-                                固定
-                              </button>
-                            </div>
-                          </div>
-                          <div className="axis-mode-actions">
-                            <span className="axis-mode-caption">
-                              {axisAuto[key] ? 'データに合わせて自動調整します' : '入力値でレンジを固定します'}
-                            </span>
-                            <button
-                              type="button"
-                              className="material-outline tiny"
-                              onClick={() => handleFitAxis(key)}
-                              disabled={!parsedData}
-                            >
-                              FIT
-                            </button>
-                          </div>
-                          <div className="axis-range-inputs">
-                            <label>
-                              <span>最小値</span>
-                              <input
-                                type="number"
-                                placeholder="auto"
-                                value={axisRanges[key]?.min ?? ''}
-                                disabled={axisAuto[key]}
-                                onChange={(event) => handleAxisRangeChange(key, 'min', event.target.value)}
-                              />
-                            </label>
-                            <label>
-                              <span>最大値</span>
-                              <input
-                                type="number"
-                                placeholder="auto"
-                                value={axisRanges[key]?.max ?? ''}
-                                disabled={axisAuto[key]}
-                                onChange={(event) => handleAxisRangeChange(key, 'max', event.target.value)}
-                              />
-                            </label>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </section>
             </div>
           </aside>
         </>
