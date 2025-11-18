@@ -91,6 +91,42 @@
   color: #64748b;
 }
 
+.pre-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.pre-filter-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  flex: 1;
+}
+
+.pre-filter-item label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.pre-filter-item input,
+.pre-filter-item select {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  background: #f8fafc;
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.pre-filter-item input:disabled,
+.pre-filter-item select:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
 .error {
   padding: 12px 16px;
   border-radius: 10px;

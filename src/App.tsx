@@ -1,6 +1,4 @@
 import { ChangeEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Papa from 'papaparse';
-import Encoding from 'encoding-japanese';
 import { Line } from 'react-chartjs-2';
 import type {
   ChartData,
@@ -24,13 +22,10 @@ import {
 } from 'chart.js';
 import zoomPlugin from 'chartjs-plugin-zoom';
 import 'chartjs-adapter-date-fns';
-import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
-import customParseFormat from 'dayjs/plugin/customParseFormat';
+import { parseFileInputs, type ParseFileInput, type ParsedData, type ParsedDataset } from './lib/dataParser';
 import './App.css';
 import pkg from '../package.json';
-
-dayjs.extend(customParseFormat);
 
 declare module 'chart.js' {
   interface TooltipPositionerMap {
@@ -125,20 +120,6 @@ const cursorOffsetPositioner: TooltipPositionerFunction<'line'> = function curso
 
 Tooltip.positioners.cursorOffset = cursorOffsetPositioner;
 
-type CellValue = string | number | Date | null | undefined;
-type DataRow = CellValue[];
-
-type ParsedData = {
-  timestamps: Date[];
-  series: Record<string, (number | null)[]>;
-};
-
-type ParsedDataset = {
-  data: ParsedData;
-  fileName: string;
-  label: string;
-};
-
 const annotateDatasetLabels = (datasets: ParsedDataset[]): ParsedDataset[] => {
   const counts = new Map<string, number>();
   return datasets.map((d, i) => {
@@ -180,13 +161,56 @@ const mergeParsedDatasets = (datasets: ParsedDataset[]): ParsedData => {
   return { timestamps, series: merged };
 };
 
+const parseFilterBoundary = (value: string): Date | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const candidate = dayjs(trimmed);
+  return candidate.isValid() ? candidate.toDate() : null;
+};
+
+const applyDataFilters = (
+  data: ParsedData,
+  options: { stride: number; startText: string; endText: string }
+): ParsedData => {
+  const stride = Number.isFinite(options.stride) && options.stride > 1 ? Math.floor(options.stride) : 1;
+  let startDate = parseFilterBoundary(options.startText);
+  let endDate = parseFilterBoundary(options.endText);
+  if (startDate && endDate && startDate > endDate) {
+    [startDate, endDate] = [endDate, startDate];
+  }
+
+  const entries = Object.entries(data.series);
+  const filteredSeries = entries.reduce((acc, [key]) => {
+    acc[key] = [];
+    return acc;
+  }, {} as Record<string, (number | null)[]>);
+
+  const filteredTimestamps: Date[] = [];
+  let accepted = 0;
+
+  data.timestamps.forEach((timestamp, index) => {
+    if (startDate && timestamp < startDate) return;
+    if (endDate && timestamp > endDate) return;
+    const include = stride === 1 || accepted % stride === 0;
+    accepted += 1;
+    if (!include) return;
+    filteredTimestamps.push(timestamp);
+    entries.forEach(([key, values]) => {
+      filteredSeries[key].push(values[index] ?? null);
+    });
+  });
+
+  return { timestamps: filteredTimestamps, series: filteredSeries };
+};
+
+type ParserWorkerResponse =
+  | { id: string; success: true; payload: ParsedDataset[] }
+  | { id: string; success: false; error: string };
+
 const AXIS_KEYS = ['y1', 'y2', 'y3'] as const;
 type AxisKey = (typeof AXIS_KEYS)[number];
 
-const AXIS_CONFIG: Record<
-  AxisKey,
-  { label: string; position: 'left' | 'right'; color: string; offset?: boolean; gridOnChart?: boolean }
-> = {
+const AXIS_CONFIG: Record<AxisKey, { label: string; position: 'left' | 'right'; color: string; offset?: boolean; gridOnChart?: boolean }> = {
   y1: { label: 'Y1 (左軸)', position: 'left', color: '#0f172a', gridOnChart: true },
   y2: { label: 'Y2 (右軸)', position: 'right', color: '#16a34a', gridOnChart: false },
   y3: { label: 'Y3 (右軸2)', position: 'right', color: '#2563eb', offset: true, gridOnChart: false }
@@ -324,18 +348,6 @@ const persistPresets = (items: DisplayPreset[]) => {
   }
 };
 
-type TimeParts = {
-  hour: number;
-  minute: number;
-  second: number;
-  millisecond: number;
-};
-
-const DATE_FORMATS = ['YYYY/MM/DD', 'YYYY-MM-DD', 'YYYY.MM.DD', 'YYYYMMDD'];
-const TIME_FORMATS = ['HH:mm:ss.SSS', 'HH:mm:ss', 'HH:mm', 'HHmmss', 'HHmm'];
-
-const defaultTime: TimeParts = { hour: 0, minute: 0, second: 0, millisecond: 0 };
-
 const colorFromIndex = (index: number) => {
   const hue = (index * 67) % 360;
   return {
@@ -402,262 +414,6 @@ const resolveColor = (color: any, dataIndex: number): string => {
   return '#888';
 };
 
-const sanitizeRows = (rows: DataRow[]): DataRow[] =>
-  rows.filter((row) =>
-    Array.isArray(row) && row.some((cell) => (cell ?? '').toString().trim().length > 0)
-  );
-
-const countNonEmptyCells = (row: DataRow): number =>
-  row.reduce(
-    (count, cell) => count + (((cell ?? '').toString().trim().length > 0) ? 1 : 0),
-    0
-  );
-
-const toNumeric = (value: CellValue): number | null => {
-  if (value === undefined || value === null) {
-    return null;
-  }
-
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-
-  if (value instanceof Date) {
-    return Number.isFinite(value.valueOf()) ? value.valueOf() : null;
-  }
-
-  const trimmed = value.toString().trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const parseExcelDate = (value: number): dayjs.Dayjs | null => {
-  const parsed = XLSX.SSF.parse_date_code(value);
-  if (!parsed) {
-    return null;
-  }
-  return dayjs(new Date(parsed.y, parsed.m - 1, parsed.d));
-};
-
-const parseDateCell = (value: CellValue): dayjs.Dayjs | null => {
-  if (value instanceof Date) {
-    return dayjs(value);
-  }
-
-  if (typeof value === 'number') {
-    return parseExcelDate(value);
-  }
-
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    for (const format of DATE_FORMATS) {
-      const candidate = dayjs(trimmed, format, true);
-      if (candidate.isValid()) {
-        return candidate;
-      }
-    }
-
-    const fallback = dayjs(trimmed);
-    if (fallback.isValid()) {
-      return fallback;
-    }
-  }
-
-  return null;
-};
-
-const normalizeExcelString = (input: string): string => input.replace(/^['＇‘’"＂]+/, '').trim();
-
-const parseTimeCell = (value: CellValue): TimeParts | null => {
-  if (value instanceof Date) {
-    return {
-      hour: value.getHours(),
-      minute: value.getMinutes(),
-      second: value.getSeconds(),
-      millisecond: value.getMilliseconds()
-    };
-  }
-
-  if (typeof value === 'number') {
-    const parsed = XLSX.SSF.parse_date_code(value);
-    if (parsed) {
-      return {
-        hour: parsed.H ?? 0,
-        minute: parsed.M ?? 0,
-        second: parsed.S ?? 0,
-        millisecond: Math.round(((parsed.u ?? 0) % 1) * 1000)
-      };
-    }
-  }
-
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return null;
-    }
-
-    const normalized = normalizeExcelString(trimmed);
-    if (!normalized) return null;
-
-    const formats = ['HH:mm:ss.SSS', 'HH:mm:ss.SS', 'HH:mm:ss.S', 'HH:mm:ss', 'HH:mm', 'HHmmss', 'HHmm'];
-    for (const format of formats) {
-      const candidate = dayjs(normalized, format, true);
-      if (candidate.isValid()) {
-        return {
-          hour: candidate.hour(),
-          minute: candidate.minute(),
-          second: candidate.second(),
-          millisecond: candidate.millisecond()
-        };
-      }
-    }
-
-    const fallback = dayjs(`1970-01-01T${normalized}`);
-    if (fallback.isValid()) {
-      return {
-        hour: fallback.hour(),
-        minute: fallback.minute(),
-        second: fallback.second(),
-        millisecond: fallback.millisecond()
-      };
-    }
-  }
-
-  return null;
-};
-
-const composeTimestamp = (primaryCell: CellValue, secondaryCell: CellValue): Date | null => {
-  const primaryDate = parseDateCell(primaryCell);
-  const secondaryTime = parseTimeCell(secondaryCell);
-
-  if (primaryDate) {
-    const timeParts = secondaryTime ?? parseTimeCell(primaryCell) ?? defaultTime;
-    return primaryDate
-      .hour(timeParts.hour)
-      .minute(timeParts.minute)
-      .second(timeParts.second)
-      .millisecond(timeParts.millisecond)
-      .toDate();
-  }
-
-  const secondaryDate = parseDateCell(secondaryCell);
-  if (secondaryDate) {
-    const firstTime = parseTimeCell(primaryCell);
-    if (firstTime) {
-      return secondaryDate
-        .hour(firstTime.hour)
-        .minute(firstTime.minute)
-        .second(firstTime.second)
-        .millisecond(firstTime.millisecond)
-        .toDate();
-    }
-    return secondaryDate.toDate();
-  }
-
-  return null;
-};
-
-const buildParsedData = (rows: DataRow[]): ParsedData => {
-  const meaningfulRows = sanitizeRows(rows);
-  const headerIndex = meaningfulRows.findIndex((row) => countNonEmptyCells(row) >= 3);
-  if (headerIndex === -1) {
-    throw new Error('ヘッダー行が見つかりませんでした。');
-  }
-
-  const headers = meaningfulRows[headerIndex].map((cell) => (cell ?? '').toString().trim());
-  if (headers.length < 3) {
-    throw new Error('最低でも日付、時刻、1つ以上のデータ列が必要です。');
-  }
-
-  const dataKeys = headers.slice(2);
-  const normalizedKeys = dataKeys.map((key, index) => {
-    const trimmed = (key ?? '').toString().trim();
-    return trimmed || `データ${index + 1}`;
-  });
-
-  const series: Record<string, (number | null)[]> = {};
-  normalizedKeys.forEach((key) => {
-    series[key] = [];
-  });
-
-  const timestamps: Date[] = [];
-
-  const dataRows = meaningfulRows.slice(headerIndex + 1);
-  for (let i = 0; i < dataRows.length; i += 1) {
-    const row = dataRows[i];
-    const timestamp = composeTimestamp(row[0], row[1]);
-    if (!timestamp) {
-      continue;
-    }
-
-    timestamps.push(timestamp);
-    normalizedKeys.forEach((label, index) => {
-      const value = toNumeric(row[index + 2]);
-      series[label].push(value);
-    });
-  }
-
-  if (!timestamps.length) {
-    throw new Error('有効なタイムスタンプが作成できませんでした。');
-  }
-
-  return { timestamps, series };
-};
-
-const decodeCsvContent = async (file: File): Promise<string> => {
-  const buffer = await file.arrayBuffer();
-  const view = new Uint8Array(buffer);
-  let text = '';
-  try {
-    text = new TextDecoder('utf-8', { fatal: false }).decode(view);
-  } catch {}
-  if (!text || text.includes('\uFFFD')) {
-    try {
-      const detected = Encoding.detect(view);
-      text = Encoding.convert(view, { to: 'UNICODE', from: detected ?? undefined, type: 'string' }) as string;
-    } catch {
-      try {
-        text = new TextDecoder('shift_jis').decode(view);
-      } catch {}
-    }
-  }
-  return text;
-};
-
-const parseCsvFile = async (file: File): Promise<DataRow[]> => {
-  const text = await decodeCsvContent(file);
-  return new Promise((resolve, reject) => {
-    Papa.parse<string[]>(text, {
-      skipEmptyLines: 'greedy',
-      complete: (results) => {
-        if (results.errors.length) {
-          reject(new Error(results.errors[0].message));
-          return;
-        }
-        resolve(results.data as DataRow[]);
-      },
-      error: (error) => reject(error)
-    });
-  });
-};
-
-const parseXlsxFile = async (file: File): Promise<DataRow[]> => {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, blankrows: false }) as DataRow[];
-  return rows;
-};
-
 const useChartData = (
   parsed: ParsedData | null,
   seriesVisibility: Record<string, boolean>,
@@ -700,6 +456,7 @@ const useChartData = (
 
 function App() {
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
+  const [baseData, setBaseData] = useState<ParsedData | null>(null);
   const [seriesVisibility, setSeriesVisibility] = useState<Record<string, boolean>>({});
   const [seriesAxis, setSeriesAxis] = useState<Record<string, AxisKey>>({});
   const [axisRanges, setAxisRanges] = useState<AxisRangeState>(() => createAxisRangeState());
@@ -726,6 +483,13 @@ function App() {
   const lastClickedIndex = useRef<number | null>(null);
   const [collapsedFiles, setCollapsedFiles] = useState<Record<string, boolean>>({});
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [rowStride, setRowStride] = useState(1);
+  const [timeFilterStart, setTimeFilterStart] = useState('');
+  const [timeFilterEnd, setTimeFilterEnd] = useState('');
+  const parserWorkerRef = useRef<Worker | null>(null);
+  const pendingParses = useRef(
+    new Map<string, { resolve: (value: ParsedDataset[]) => void; reject: (error: Error) => void }>()
+  );
 
   useEffect(() => {
     persistPresets(presets);
@@ -736,6 +500,57 @@ function App() {
       setSelectedPresetId('');
     }
   }, [presets, selectedPresetId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof Worker === 'undefined') {
+      return undefined;
+    }
+    const worker = new Worker(new URL('./workers/parserWorker.ts', import.meta.url), { type: 'module' });
+    parserWorkerRef.current = worker;
+
+    worker.onmessage = (event: MessageEvent<ParserWorkerResponse>) => {
+      const message = event.data;
+      const pending = pendingParses.current.get(message.id);
+      if (!pending) {
+        return;
+      }
+      pendingParses.current.delete(message.id);
+      if (message.success) {
+        pending.resolve(message.payload);
+      } else {
+        const errorText = 'error' in message ? message.error ?? '解析に失敗しました。' : '解析に失敗しました。';
+        pending.reject(new Error(errorText));
+      }
+    };
+
+    worker.onerror = (event) => {
+      const error = new Error(event.message || '解析ワーカーでエラーが発生しました。');
+      pendingParses.current.forEach((pending) => pending.reject(error));
+      pendingParses.current.clear();
+    };
+
+    return () => {
+      pendingParses.current.forEach((pending) => pending.reject(new Error('解析ワーカーが停止しました。')));
+      pendingParses.current.clear();
+      worker.terminate();
+      if (parserWorkerRef.current === worker) {
+        parserWorkerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!baseData) {
+      setParsedData(null);
+      return;
+    }
+    const filtered = applyDataFilters(baseData, {
+      stride: rowStride,
+      startText: timeFilterStart,
+      endText: timeFilterEnd
+    });
+    setParsedData(filtered);
+  }, [baseData, rowStride, timeFilterStart, timeFilterEnd]);
 
   const chartData = useChartData(parsedData, seriesVisibility, seriesAxis);
 
@@ -887,17 +702,55 @@ function App() {
 
   const resetState = () => {
     setParsedData(null);
+    setBaseData(null);
     setSeriesVisibility({});
     setSeriesAxis({});
     setAxisRanges(createAxisRangeState());
     setAxisAuto(createAxisAutoState());
     setFileName('');
+    setLoadedFiles([]);
   };
 
   const resetAxisRanges = () => {
     setAxisRanges(createAxisRangeState());
     setAxisAuto(createAxisAutoState());
   };
+
+  const parseFilesWithWorker = useCallback(async (files: File[]): Promise<ParsedDataset[]> => {
+    const prepared: ParseFileInput[] = [];
+    for (const file of files) {
+      // eslint-disable-next-line no-await-in-loop
+      const buffer = await file.arrayBuffer();
+      prepared.push({ name: file.name, buffer, type: file.type });
+    }
+
+    const worker = parserWorkerRef.current;
+    if (worker) {
+      const requestId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      const transferables = prepared.map((file) => file.buffer);
+      const promise = new Promise<ParsedDataset[]>((resolve, reject) => {
+        pendingParses.current.set(requestId, { resolve, reject });
+      });
+
+      try {
+        worker.postMessage({ id: requestId, files: prepared }, transferables as Transferable[]);
+        return await promise;
+      } catch (error) {
+        pendingParses.current.delete(requestId);
+        worker.terminate();
+        if (parserWorkerRef.current === worker) {
+          parserWorkerRef.current = null;
+        }
+        console.error('解析ワーカーにメッセージを送信できませんでした。メインスレッドで解析します。', error);
+      }
+    }
+
+    return parseFileInputs(prepared);
+  }, []);
 
   const initializeSeriesState = (series: Record<string, (number | null)[]>) => {
     const visibility: Record<string, boolean> = {};
@@ -917,19 +770,10 @@ function App() {
     setErrorMessage(null);
     setInputKey(Date.now());
     try {
-      const datasets: ParsedDataset[] = [];
-      for (const file of files) {
-        const ext = file.name.split('.').pop()?.toLowerCase();
-        let rows: DataRow[];
-        if (ext === 'csv') rows = await parseCsvFile(file);
-        else if (ext === 'xlsx' || ext === 'xls') rows = await parseXlsxFile(file);
-        else throw new Error('CSV もしくは XLSX ファイルを選択してください。');
-        const parsed = buildParsedData(rows);
-        datasets.push({ data: parsed, fileName: file.name, label: file.name });
-      }
+      const datasets = await parseFilesWithWorker(files);
       const labeled = annotateDatasetLabels(datasets);
       const merged = mergeParsedDatasets(labeled);
-      setParsedData(merged);
+      setBaseData(merged);
       initializeSeriesState(merged.series);
       setFileName(labeled.map((d) => d.fileName).join(', '));
       setLoadedFiles(labeled.map(({ fileName, label }) => ({ fileName, label })));
@@ -1317,6 +1161,45 @@ function App() {
         <p className="hint">
           1列目: 日付、2列目: 時刻、3列目以降: 計測値（任意個）。ヘッダーは1行目に配置してください。
         </p>
+        <div className="pre-filter-row">
+          <div className="pre-filter-item">
+            <label htmlFor="row-stride">サンプリング</label>
+            <select
+              id="row-stride"
+              value={rowStride}
+              onChange={(event) => setRowStride(Number(event.target.value) || 1)}
+              disabled={isLoading}
+            >
+              <option value={1}>全件</option>
+              <option value={2}>1/2 サンプリング</option>
+              <option value={5}>1/5 サンプリング</option>
+              <option value={10}>1/10 サンプリング</option>
+            </select>
+          </div>
+          <div className="pre-filter-item">
+            <label htmlFor="filter-start">開始時刻 (任意)</label>
+            <input
+              id="filter-start"
+              type="text"
+              placeholder="例: 2025/11/16 08:00"
+              value={timeFilterStart}
+              onChange={(event) => setTimeFilterStart(event.target.value)}
+              disabled={isLoading}
+            />
+          </div>
+          <div className="pre-filter-item">
+            <label htmlFor="filter-end">終了時刻 (任意)</label>
+            <input
+              id="filter-end"
+              type="text"
+              placeholder="例: 2025/11/16 12:00"
+              value={timeFilterEnd}
+              onChange={(event) => setTimeFilterEnd(event.target.value)}
+              disabled={isLoading}
+            />
+          </div>
+        </div>
+        <p className="hint">上記フィルタは読み込み済みデータにも即時反映されます。</p>
       </section>
 
       {errorMessage && <div className="error">{errorMessage}</div>}
