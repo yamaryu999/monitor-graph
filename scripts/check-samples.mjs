@@ -82,8 +82,10 @@ const parseCsvPath = (filepath) => {
   const result = Papa.parse(text, { skipEmptyLines: 'greedy' });
   if (result.errors?.length) throw new Error(result.errors[0].message);
   const rows = result.data;
-  // header detection
-  const headerIndex = rows.findIndex((r) => Array.isArray(r) && r.length >= 3);
+  const countNonEmpty = (row = []) =>
+    row.reduce((count, cell) => count + (((cell ?? '').toString().trim().length > 0) ? 1 : 0), 0);
+  // header detection (need at least date/time + 1 series name)
+  const headerIndex = rows.findIndex((r) => Array.isArray(r) && countNonEmpty(r) >= 3);
   if (headerIndex < 0) throw new Error('ヘッダー行が見つかりませんでした');
   const headers = rows[headerIndex];
   const dataRows = rows.slice(headerIndex + 1);

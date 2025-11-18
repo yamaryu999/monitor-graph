@@ -407,6 +407,12 @@ const sanitizeRows = (rows: DataRow[]): DataRow[] =>
     Array.isArray(row) && row.some((cell) => (cell ?? '').toString().trim().length > 0)
   );
 
+const countNonEmptyCells = (row: DataRow): number =>
+  row.reduce(
+    (count, cell) => count + (((cell ?? '').toString().trim().length > 0) ? 1 : 0),
+    0
+  );
+
 const toNumeric = (value: CellValue): number | null => {
   if (value === undefined || value === null) {
     return null;
@@ -561,7 +567,7 @@ const composeTimestamp = (primaryCell: CellValue, secondaryCell: CellValue): Dat
 
 const buildParsedData = (rows: DataRow[]): ParsedData => {
   const meaningfulRows = sanitizeRows(rows);
-  const headerIndex = meaningfulRows.findIndex((row) => row.length >= 3);
+  const headerIndex = meaningfulRows.findIndex((row) => countNonEmptyCells(row) >= 3);
   if (headerIndex === -1) {
     throw new Error('ヘッダー行が見つかりませんでした。');
   }
